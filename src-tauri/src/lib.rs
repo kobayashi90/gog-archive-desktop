@@ -14,6 +14,17 @@ pub struct AppState {
     pub engine: Arc<tokio::sync::Mutex<TorrentEngine>>,
 }
 
+fn activate_window() {
+    if let Ok(output) = std::process::Command::new("kdotool")
+        .args(["search", "--name", "GOG Archive Desktop", "windowactivate"])
+        .output()
+    {
+        if !output.status.success() {
+            eprintln!("kdotool windowactivate failed: {}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
+}
+
 pub fn run() {
     let settings = Settings::load();
 
@@ -113,7 +124,7 @@ pub fn run() {
                                 if let Some(window) = app.get_webview_window("main") {
                                     let _ = window.unminimize();
                                     let _ = window.show();
-                                    let _ = window.set_focus();
+                                    activate_window();
                                 }
                             }
                             "pause_all" | "resume_all" => {
@@ -131,7 +142,7 @@ pub fn run() {
                                 if let Some(window) = tray.app_handle().get_webview_window("main") {
                                     let _ = window.unminimize();
                                     let _ = window.show();
-                                    let _ = window.set_focus();
+                                    activate_window();
                                 }
                             }
                         }
