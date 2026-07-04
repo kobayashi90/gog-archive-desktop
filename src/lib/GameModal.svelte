@@ -190,7 +190,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="modal-backdrop" class:hidden={false} on:click={handleOverlayClick}>
+<div class="modal-backdrop" class:hidden={false} on:click={handleOverlayClick} on:keydown={handleKeydown} role="presentation">
   <div class="modal-content" role="dialog">
     <button class="modal-close" on:click={close}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

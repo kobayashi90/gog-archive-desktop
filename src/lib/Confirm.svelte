@@ -20,8 +20,8 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if $confirmState}
-    <div class="confirm-overlay" on:click|self={handleCancel} role="dialog" aria-modal="true">
-      <div class="confirm-dialog" role="document">
+    <div class="confirm-overlay" on:click|self={handleCancel} on:keydown={handleKeydown} role="presentation">
+      <div class="confirm-dialog" role="dialog" aria-modal="true">
         <h3>{$confirmState.title}</h3>
         <p>{$confirmState.message}</p>
         <div class="confirm-actions">
