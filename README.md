@@ -145,4 +145,4 @@ Game metadata is sourced from `https://gog.squid.wtf/api`:
 
 ## License
 
-MIT
+GNU General Public License v3.0 (GPL-3.0)
