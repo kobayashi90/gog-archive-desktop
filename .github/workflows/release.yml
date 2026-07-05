@@ -71,9 +71,9 @@ jobs:
               src-tauri/target/release/bundle/msi/*.msi
               src-tauri/target/release/bundle/nsis/*.exe
           - platform: macos-latest
-            build-args: '--bundles dmg'
+            build-args: '--bundles dmg --target universal-apple-darwin'
             artifact-patterns: |
-              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -88,6 +88,10 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Add x86_64 target (macOS universal binary)
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
 
       - name: Install Linux deps
         if: matrix.platform == 'ubuntu-22.04'
