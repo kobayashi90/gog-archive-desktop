@@ -73,7 +73,7 @@ fn free_disk_space(path: &Path) -> Result<u64, String> {
 
 #[cfg(not(unix))]
 fn free_disk_space(_path: &Path) -> Result<u64, String> {
-    Ok(u64::MAX)
+    Ok(i64::MAX as u64)
 }
 
 struct RateState {
@@ -195,7 +195,7 @@ impl TorrentEngine {
             })
             .collect();
 
-        let free_bytes = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
+        let free_bytes = free_disk_space(&self.base_path).unwrap_or(i64::MAX as u64) as i64;
 
         Ok(TorrentPreview { files, free_bytes })
     }
@@ -393,7 +393,7 @@ impl TorrentEngine {
                 0
             };
 
-            let free = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
+        let free = free_disk_space(&self.base_path).unwrap_or(i64::MAX as u64) as i64;
 
             results.push(TorrentStatus {
                 info_hash,
