@@ -76,6 +76,11 @@ An AppImage build is also available for other distributions.
 
 **Requirements**: glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, Fedora 37+).
 
+### macOS
+Download the `.dmg` from the [releases page](https://github.com/kobayashi90/gog-archive-desktop/releases), mount it, and drag the app to Applications.
+
+> **Note**: The app is not signed (no Apple Developer account). On first launch, right-click the app > Open, then click "Open" in the dialog. This is only needed once.
+
 ### Windows
 Download the `.msi` or `.exe` installer from the [releases page](https://github.com/kobayashi90/gog-archive-desktop/releases).
 
