@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { showToast, toasts } from "./lib/stores.js";
+  import { showToast } from "./lib/stores.js";
   import Browse from "./lib/Browse.svelte";
   import Queue from "./lib/Queue.svelte";
   import Library from "./lib/Library.svelte";
@@ -13,126 +13,193 @@
   import Confirm from "./lib/Confirm.svelte";
 
   let tab = $state("browse");
-  let searchQuery = $state("");
-  let advFilters = $state(null);
   let gameCount = $state(0);
   let libraryCount = $state(0);
   let detailGame = $state(null);
+  let advFilters = $state(null);
   let torrentStatuses = $state([]);
-  let minimized = $state(false);
-  let showToastBar = $state(false);
+  let downSpeed = $state(0);
+  let upSpeed = $state(0);
+
+  // debounced search
+  let rawQuery = $state("");
+  let searchQuery = $state("");
+
+  let searchTimer;
+  $effect(() => {
+    if (rawQuery !== undefined) {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        searchQuery = rawQuery;
+      }, 300);
+      return () => clearTimeout(searchTimer);
+    }
+  });
 
   let tabs = $derived([
     { id: "browse", label: "Browse", count: gameCount },
-    { id: "queue", label: "Queue", count: torrentStatuses.length },
+    { id: "queue", label: "Downloads", count: torrentStatuses.length },
     { id: "library", label: "Library", count: libraryCount },
     { id: "settings", label: "Settings" },
   ]);
 
-  onMount(async () => {
-    const unlisten = await listen("torrent-update", (event) => {
-      torrentStatuses = event.payload;
+  let anyRunning = $derived(
+    torrentStatuses.length > 0 && torrentStatuses.some(
+      t => t.state !== "paused" && t.state !== "stopped" && t.state !== "error" &&
+           t.state !== "seeding" && t.state !== "finished"
+    )
+  );
+
+  // smoothed per-torrent rates via EMA
+  let slugSmoothRate = $state({});
+  const RATE_ALPHA = 0.3;
+
+  let appWindow = getCurrentWindow();
+
+  onMount(() => {
+    const unlistenTray = listen("tray-action", (e) => {
+      const action = e.payload;
+      if (action === "show") {
+        try { appWindow.unminimize(); } catch (e) {}
+        try { appWindow.show(); } catch (e) {}
+        try { appWindow.setFocus(); } catch (e) {}
+      } else if (action === "downloads") { closeDetail(); tab = "queue"; }
+      else if (action === "settings") { closeDetail(); tab = "settings"; }
+      else if (action === "pause_all") { pauseAll(); }
+      else if (action === "resume_all") { resumeAll(); }
     });
-    const unlistenDownloads = await listen("download-progress", (event) => {
-      const p = event.payload;
-      if (p.done) {
-        showToast(`Download complete: ${p.name || p.slug}`, "success");
-      }
+    const unlistenTorrent = listen("torrent-status", (e) => {
+      const statuses = e.payload;
+      torrentStatuses = statuses.map(s => {
+        const prev = slugSmoothRate[s.slug];
+        const smooth = prev === undefined ? (s.download_rate || 0) : prev + ((s.download_rate || 0) - prev) * RATE_ALPHA;
+        slugSmoothRate = { ...slugSmoothRate, [s.slug]: smooth };
+        return { ...s, download_rate: smooth };
+      });
+      const downloading = statuses.filter(
+        s => s.state === "downloading" || s.state === "metadata" || s.state === "checking"
+      );
+      downSpeed = downloading.reduce((a, s) => a + (s.download_rate || 0), 0);
+      upSpeed = statuses.reduce((a, s) => a + (s.upload_rate || 0), 0);
     });
-    const unlistenToast = await listen("show-toast", (event) => {
-      const { message, type } = event.payload;
-      showToast(message, type || "info", 5000);
+    const unlistenDownloads = listen("download-progress", (e) => {
+      const p = e.payload;
+      if (p.done) showToast(`Download complete: ${p.name || p.slug}`, "success");
     });
 
     return () => {
-      unlisten();
-      unlistenDownloads();
-      unlistenToast();
+      unlistenTray.then(f => f());
+      unlistenTorrent.then(f => f());
+      unlistenDownloads.then(f => f());
     };
   });
 
-  function closeDetail() {
-    detailGame = null;
+  async function toggleAll() {
+    if (anyRunning) {
+      for (const t of torrentStatuses) try { await invoke("torrent_pause", { slug: t.slug }); } catch (e) {}
+    } else {
+      for (const t of torrentStatuses) try { await invoke("torrent_resume", { slug: t.slug }); } catch (e) {}
+    }
   }
 
-  function handleViewGame(slug) {
+  async function pauseAll() {
+    for (const t of torrentStatuses) {
+      if (t.state !== "paused" && t.state !== "stopped" && t.state !== "error")
+        try { await invoke("torrent_pause", { slug: t.slug }); } catch (e) {}
+    }
+  }
+
+  async function resumeAll() {
+    for (const t of torrentStatuses) {
+      if (t.state === "paused")
+        try { await invoke("torrent_resume", { slug: t.slug }); } catch (e) {}
+    }
+  }
+
+  function closeDetail() { detailGame = null; }
+
+  async function handleViewGame(slug) {
     if (slug) {
-      detailGame = { slug };
+      try { detailGame = await invoke("get_game", { slug }); } catch (e) {}
     } else {
       closeDetail();
     }
   }
 
-  function handleNavigateTo(t) {
-    tab = t;
-  }
+  function handleNavigateTo(t) { tab = t; }
 
-  function handleClearSearch() {
-    searchQuery = "";
-  }
+  function handleClearSearch() { rawQuery = ""; searchQuery = ""; }
 
-  function handleClearAdvFilters() {
-    advFilters = null;
-  }
+  function handleClearAdvFilters() { advFilters = null; }
 
   function handleAdvSearch(filters) {
     advFilters = filters;
+    rawQuery = "";
     searchQuery = "";
+    tab = "browse";
   }
 
   function handleFilterGenre(g) {
     advFilters = { genre: [g] };
+    rawQuery = "";
     searchQuery = "";
     tab = "browse";
   }
 
   function handleFilterDeveloper(d) {
     advFilters = { developer: [d] };
+    rawQuery = "";
     searchQuery = "";
     tab = "browse";
   }
 
   function handleFilterPublisher(p) {
     advFilters = { publisher: [p] };
+    rawQuery = "";
     searchQuery = "";
     tab = "browse";
   }
 
   function handleFilterTag(t) {
     advFilters = { tag: [t] };
+    rawQuery = "";
     searchQuery = "";
     tab = "browse";
   }
 
   function handleFilterYear(y) {
     advFilters = { year: [y] };
+    rawQuery = "";
     searchQuery = "";
     tab = "browse";
   }
 
-  let appWindow = getCurrentWindow();
-
-  async function toggleMinimize() {
-    minimized = !minimized;
-    if (minimized) {
-      await appWindow.minimize();
-    } else {
-      await appWindow.unminimize();
-    }
+  function goBrowse() {
+    closeDetail();
+    rawQuery = "";
+    searchQuery = "";
+    tab = "browse";
+    advFilters = null;
   }
 
-  let trayTimer;
+  function handleTorrentBarClick() { closeDetail(); tab = "queue"; }
 
-  function showTrayToast(msg) {
-    showToastBar = true;
-    clearTimeout(trayTimer);
-    trayTimer = setTimeout(() => {
-      showToastBar = false;
-    }, 3000);
+  function formatSpeed(bytes) {
+    if (bytes <= 0) return "\u2014";
+    const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+    let i = 0, v = bytes;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(2) + " " + units[i];
+  }
+
+  function handleKeydown(e) {
+    if (e.key === "Escape") closeDetail();
   }
 </script>
 
-<div class="app" class:minimized>
+<svelte:window onkeydown={handleKeydown} />
+
+<div class="app">
   <!-- Titlebar -->
   <div class="titlebar" data-tauri-drag-region>
     <div class="titlebar-left">
@@ -142,22 +209,21 @@
       <span class="titlebar-title">GOG Archive</span>
       <div class="titlebar-search">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input
-          type="text"
-          placeholder="Search games..."
-          bind:value={searchQuery}
-        />
+        <input type="text" placeholder="Search games..." bind:value={rawQuery} />
       </div>
     </div>
     <div class="titlebar-right">
-      <button class="tb-btn" onclick={() => (tab = "queue")} aria-label="Queue">
+      <button class="tb-btn" onclick={() => handleNavigateTo("queue")} aria-label="Downloads">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         {#if torrentStatuses.length}
           <span class="badge">{torrentStatuses.length}</span>
         {/if}
       </button>
-      <button class="tb-btn minimize-btn" onclick={toggleMinimize} aria-label="Minimize to tray">
+      <button class="tb-btn" onclick={() => appWindow.minimize()} aria-label="Minimize">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <button class="tb-btn tb-close" onclick={() => appWindow.close()} aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
   </div>
@@ -167,12 +233,39 @@
     {#each tabs as t}
       <button class="tab" class:active={tab === t.id} onclick={() => (tab = t.id)}>
         {t.label}
-        {#if t.count !== undefined}
+        {#if t.count !== undefined && t.count > 0}
           <span class="tab-count">{t.count > 999 ? "999+" : t.count}</span>
         {/if}
       </button>
     {/each}
   </div>
+
+  <!-- Torrent bar -->
+  {#if torrentStatuses.length > 0}
+    <div class="torrent-bar" onclick={handleTorrentBarClick} onkeydown={(e) => e.key === 'Enter' && handleTorrentBarClick()} role="button" tabindex="0" aria-label="Open downloads">
+      <div class="tbar-left">
+        <span class="tbar-count">{torrentStatuses.filter(s => s.state === "downloading" || s.state === "metadata" || s.state === "checking").length} active</span>
+        <span class="tbar-dots">&middot;</span>
+        <span class="tbar-speed down">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="7 13 12 18 17 13"/><line x1="12" y1="18" x2="12" y2="6"/></svg>
+          {formatSpeed(downSpeed)}
+        </span>
+        <span class="tbar-speed up">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="17 11 12 6 7 11"/><line x1="12" y1="18" x2="12" y2="6"/></svg>
+          {formatSpeed(upSpeed)}
+        </span>
+      </div>
+      <div class="tbar-right">
+        <button class="tbar-toggle" onclick={(e) => { e.stopPropagation(); toggleAll(); }} title={anyRunning ? "Pause All" : "Resume All"}>
+          {#if anyRunning}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          {:else}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          {/if}
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <!-- Tab content -->
   <div class="content">
@@ -212,12 +305,6 @@
 <Toast />
 <Confirm />
 
-{#if showToastBar}
-  <div class="tray-toast">
-    Downloading in background
-  </div>
-{/if}
-
 <style>
   .app {
     display: flex;
@@ -227,8 +314,6 @@
     color: var(--text);
     overflow: hidden;
   }
-
-  .app.minimized { opacity: .85; }
 
   .titlebar {
     display: flex;
@@ -286,15 +371,9 @@
     transition: border .2s;
   }
 
-  .titlebar-search input:focus {
-    border-color: var(--text-muted);
-  }
+  .titlebar-search input:focus { border-color: var(--text-muted); }
 
-  .titlebar-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
+  .titlebar-right { display: flex; align-items: center; gap: 6px; }
 
   .tb-btn {
     position: relative;
@@ -311,10 +390,9 @@
     transition: all .15s;
   }
 
-  .tb-btn:hover {
-    background: rgba(255,255,255,.06);
-    color: var(--text);
-  }
+  .tb-btn:hover { background: rgba(255,255,255,.06); color: var(--text); }
+
+  .tb-close:hover { background: rgba(220,38,38,.15); color: #ef4444; }
 
   .badge {
     position: absolute;
@@ -357,15 +435,9 @@
     margin-bottom: -1px;
   }
 
-  .tab:hover {
-    color: var(--text);
-    border-bottom-color: rgba(255,255,255,.2);
-  }
+  .tab:hover { color: var(--text); border-bottom-color: rgba(255,255,255,.2); }
 
-  .tab.active {
-    color: var(--text);
-    border-bottom-color: var(--text);
-  }
+  .tab.active { color: var(--text); border-bottom-color: var(--text); }
 
   .tab-count {
     font-size: .6rem;
@@ -378,27 +450,51 @@
 
   .tab.active .tab-count { background: rgba(255,255,255,.1); color: var(--text); }
 
+  .torrent-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background .15s;
+  }
+
+  .torrent-bar:hover { background: var(--surface-hover); }
+
+  .tbar-left { display: flex; align-items: center; gap: 6px; font-size: .72rem; color: var(--text-muted); }
+
+  .tbar-dots { opacity: .4; }
+
+  .tbar-speed { display: flex; align-items: center; gap: 3px; font-weight: 600; }
+
+  .tbar-speed.down { color: var(--accent2); }
+  .tbar-speed.up { color: #ffc107; }
+
+  .tbar-right { display: flex; align-items: center; gap: 6px; }
+
+  .tbar-toggle {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .15s;
+  }
+
+  .tbar-toggle:hover { background: rgba(255,255,255,.08); color: var(--text); }
+
   .content {
     flex: 1;
     overflow: hidden;
     display: flex;
     flex-direction: column;
   }
-
-  .tray-toast {
-    position: fixed;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 16px;
-    font-size: .8rem;
-    color: var(--text-muted);
-    z-index: 500;
-    animation: fadeIn .2s ease-out;
-  }
-
-  @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
