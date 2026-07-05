@@ -56,6 +56,7 @@ pub struct TorrentPreview {
     pub free_bytes: i64,
 }
 
+#[cfg(unix)]
 fn free_disk_space(path: &Path) -> Result<u64, String> {
     let cpath = std::ffi::CString::new(
         path.to_string_lossy().as_bytes()
@@ -68,6 +69,11 @@ fn free_disk_space(path: &Path) -> Result<u64, String> {
     }
 
     Ok(stat.f_frsize as u64 * stat.f_bavail as u64)
+}
+
+#[cfg(not(unix))]
+fn free_disk_space(_path: &Path) -> Result<u64, String> {
+    Ok(u64::MAX)
 }
 
 struct RateState {
