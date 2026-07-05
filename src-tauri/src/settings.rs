@@ -20,8 +20,8 @@ pub struct Settings {
     pub proxy_url: String,
     pub max_peers: i64,
     pub listen_port: i64,
-    pub seed_ratio: f64,
-    pub seed_hours: i64,
+    pub notify_on_complete: bool,
+    pub skip_file_selector: bool,
 }
 
 impl Default for Settings {
@@ -39,8 +39,8 @@ impl Default for Settings {
             proxy_url: String::new(),
             max_peers: 0,
             listen_port: 0,
-            seed_ratio: 0.0,
-            seed_hours: 0,
+            notify_on_complete: true,
+            skip_file_selector: false,
         }
     }
 }

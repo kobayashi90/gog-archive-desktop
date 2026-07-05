@@ -1576,12 +1576,13 @@ dependencies = [
 
 [[package]]
 name = "gog-archive"
-version = "0.1.6"
+version = "1.0.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
  "futures",
  "hex 0.4.3",
+ "libc",
  "librqbit",
  "log",
  "reqwest 0.12.28",

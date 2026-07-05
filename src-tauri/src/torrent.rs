@@ -3,7 +3,7 @@ use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, Sessi
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -28,6 +28,7 @@ pub struct TorrentStatus {
     pub verified: bool,
     pub seeding_secs: i64,
     pub save_path: String,
+    pub free_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +48,26 @@ pub struct TorrentFileInfo {
     pub index: usize,
     pub name: String,
     pub size: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TorrentPreview {
+    pub files: Vec<TorrentFileInfo>,
+    pub free_bytes: i64,
+}
+
+fn free_disk_space(path: &Path) -> Result<u64, String> {
+    let cpath = std::ffi::CString::new(
+        path.to_string_lossy().as_bytes()
+    ).map_err(|_| "Invalid path for disk space check".to_string())?;
+
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let ret = unsafe { libc::statvfs(cpath.as_ptr(), &mut stat) };
+    if ret != 0 {
+        return Err("Failed to query disk space".into());
+    }
+
+    Ok(stat.f_frsize as u64 * stat.f_bavail as u64)
 }
 
 struct RateState {
@@ -142,7 +163,7 @@ impl TorrentEngine {
         })
     }
 
-    pub async fn preview_magnet(&self, magnet: &str) -> Result<Vec<TorrentFileInfo>, String> {
+    pub async fn preview_magnet(&self, magnet: &str) -> Result<TorrentPreview, String> {
         let response = self.session.add_torrent(
                 AddTorrent::from_url(magnet.to_string()),
                 Some(AddTorrentOptions {
@@ -168,7 +189,9 @@ impl TorrentEngine {
             })
             .collect();
 
-        Ok(files)
+        let free_bytes = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
+
+        Ok(TorrentPreview { files, free_bytes })
     }
 
     pub async fn add_magnet(&self, magnet: &str, slug: &str, selected_files: Option<Vec<usize>>) -> Result<(), String> {
@@ -178,6 +201,15 @@ impl TorrentEngine {
         check_path_under_base(&slug_path, &self.base_path)?;
 
         let only_files = selected_files.filter(|v| !v.is_empty());
+
+        // Safety net: check disk isn't critically full (exact size unknown here)
+        let free = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
+        if free < 512 * 1024 * 1024 {
+            return Err(format!(
+                "Very low disk space: only {:.1} GB available. Free up space and try again.",
+                free as f64 / (1024.0 * 1024.0 * 1024.0)
+            ));
+        }
 
         let response = self.session.add_torrent(
                 AddTorrent::from_url(magnet.to_string()),
@@ -302,7 +334,7 @@ impl TorrentEngine {
         // Compute aggregate totals for rate calculation
         let total_progress: i64 = raw.iter().map(|r| r.3).sum();
         let total_uploaded: i64 = raw.iter().map(|r| r.4).sum();
-        let (dlr, ulr) = inner.rate.update(total_progress, total_uploaded);
+        let (_dlr, _ulr) = inner.rate.update(total_progress, total_uploaded);
 
         let mut results = Vec::new();
         for (info_hash, name, save_path, progress_bytes, uploaded_bytes, total_bytes, state, finished, num_peers) in raw {
@@ -329,14 +361,13 @@ impl TorrentEngine {
                 .map(slug_to_title)
                 .unwrap_or_else(|| slug_to_title(&slug));
 
-            // Per-torrent download rate for ETA
-            let tdlr = if !finished {
+            // Per-torrent rates
+            let (tdlr, tulr) = if !finished {
                 let t_rate = inner.torrent_rates.entry(slug.clone()).or_insert_with(RateState::new);
-                let (d, _) = t_rate.update(progress_bytes, uploaded_bytes);
-                d
+                t_rate.update(progress_bytes, uploaded_bytes)
             } else {
                 inner.torrent_rates.remove(&slug);
-                0
+                (0, 0)
             };
             let eta = if tdlr > 0 { remaining / tdlr } else { 0 };
 
@@ -356,6 +387,8 @@ impl TorrentEngine {
                 0
             };
 
+            let free = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
+
             results.push(TorrentStatus {
                 info_hash,
                 name: name_display,
@@ -364,8 +397,8 @@ impl TorrentEngine {
                 image: None,
                 progress,
                 state: state_str.to_string(),
-                download_rate: dlr,
-                upload_rate: ulr,
+                download_rate: tdlr,
+                upload_rate: tulr,
                 total_download: progress_bytes,
                 total_upload: uploaded_bytes,
                 total_size: total_bytes,
@@ -375,6 +408,7 @@ impl TorrentEngine {
                 seeding_secs,
                 save_path,
                 verified: false,
+                free_bytes: free,
             });
         }
 

@@ -1,5 +1,5 @@
 use crate::api;
-use crate::torrent::{TorrentFileInfo, TorrentStatus, LibraryEntry};
+use crate::torrent::{TorrentPreview, TorrentStatus, LibraryEntry};
 use crate::AppState;
 use std::process::Command;
 use tauri::State;
@@ -96,32 +96,12 @@ pub async fn save_settings(
 // ── Torrent Operations ──
 
 pub async fn collect_torrent_status(state: &AppState) -> Result<Vec<TorrentStatus>, String> {
-    let (seed_ratio, seed_hours) = {
-        let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (s.seed_ratio, s.seed_hours)
-    };
-
     let engine = state.engine.lock().await;
     let mut results = engine.status_all().await;
 
     let mut finished: Vec<String> = Vec::new();
     for status in &results {
-        if status.state != "seeding" || status.progress < 1.0 {
-            continue;
-        }
-
-        let stop = if seed_ratio > 0.0 && seed_hours > 0 {
-            status.total_size > 0 && status.total_upload as f64 / status.total_size as f64 >= seed_ratio
-                || status.seeding_secs >= seed_hours * 3600
-        } else if seed_ratio > 0.0 {
-            status.total_size > 0 && status.total_upload as f64 / status.total_size as f64 >= seed_ratio
-        } else if seed_hours > 0 {
-            status.seeding_secs >= seed_hours * 3600
-        } else {
-            true
-        };
-
-        if stop {
+        if status.state == "seeding" && status.progress >= 1.0 {
             finished.push(status.slug.clone());
         }
     }
@@ -160,7 +140,7 @@ pub async fn torrent_status_all(state: State<'_, AppState>) -> Result<Vec<Torren
 pub async fn torrent_preview(
     state: State<'_, AppState>,
     magnet: String,
-) -> Result<Vec<TorrentFileInfo>, String> {
+) -> Result<TorrentPreview, String> {
     let engine = state.engine.lock().await;
     engine.preview_magnet(&magnet).await
 }

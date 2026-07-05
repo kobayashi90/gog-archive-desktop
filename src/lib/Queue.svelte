@@ -91,19 +91,34 @@
             {:else}
               <div class="queue-thumb queue-thumb-letter">{(t.title || t.name || "?")[0].toUpperCase()}</div>
             {/if}
-            <div class="queue-body">
+              <div class="queue-body">
               <div class="queue-name" title={t.title || t.name}>{t.title || t.name}</div>
-              <div class="queue-bar-track">
-                <div class="queue-bar-fill" style="width: {Math.min(t.progress * 100, 100)}%"></div>
-              </div>
-              <div class="queue-stats">
-                <span class="qstat-pct">{(t.progress * 100).toFixed(1)}%</span>
-                <span class="qstat-speed">&darr; {fmtSpeed(t.download_rate)}</span>
-                {#if t.eta > 0 && Number.isFinite(t.eta)}
-                  <span class="qstat-eta">{fmtEta(t.eta)}</span>
-                {/if}
-
-              </div>
+              {#if t.state === "queued"}
+                <div class="queue-status-label queue-status-preparing">
+                  <span class="qspinner"></span> Preparing download...
+                </div>
+              {:else if t.state === "error"}
+                <div class="queue-status-label queue-status-error">
+                  Error &mdash; failed to download
+                </div>
+              {:else}
+                <div class="queue-bar-track">
+                  <div class="queue-bar-fill" style="width: {Math.min(t.progress * 100, 100)}%"></div>
+                </div>
+                <div class="queue-stats">
+                  <span class="qstat-pct">{(t.progress * 100).toFixed(1)}%</span>
+                  <span class="qstat-down">&darr; {fmtSpeed(t.download_rate)}</span>
+                  {#if t.num_peers > 0}
+                    <span class="qstat-peers">{t.num_peers} peers</span>
+                  {/if}
+                  {#if t.eta > 0 && Number.isFinite(t.eta)}
+                    <span class="qstat-eta">{fmtEta(t.eta)}</span>
+                  {/if}
+                  {#if t.total_size > 0}
+                    <span class="qstat-size">{fmt(t.total_download)} / {fmt(t.total_size)}</span>
+                  {/if}
+                </div>
+              {/if}
             </div>
             <div class="queue-actions">
               {#if t.state === "paused" || t.state === "error" || t.state === "stopped"}
@@ -162,6 +177,11 @@
         {/each}
       </div>
     {/if}
+    {#each torrentStatuses.slice(0, 1) as t}
+      {#if t.free_bytes > 0}
+        <div class="disk-space-bar">{fmt(t.free_bytes)} free on disk</div>
+      {/if}
+    {/each}
   {/if}
 </div>
 
@@ -273,12 +293,6 @@
     color: var(--text);
   }
 
-  .queue-stats .qstat-speed {
-    min-width: 8ch;
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
-
   .queue-status {
     display: inline-flex;
     align-items: center;
@@ -355,4 +369,44 @@
   }
 
   @keyframes qspin { to { transform: rotate(360deg); } }
+
+  .queue-status-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .78rem;
+    font-weight: 600;
+    padding: 2px 0;
+  }
+
+  .queue-status-preparing {
+    color: #f59e0b;
+  }
+
+  .queue-status-error {
+    color: #ef4444;
+  }
+
+  .qstat-down {
+    min-width: 7ch;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .qstat-peers {
+    color: #60a5fa;
+  }
+
+  .qstat-size {
+    color: var(--text-muted);
+    opacity: .8;
+  }
+
+  .disk-space-bar {
+    text-align: center;
+    font-size: .72rem;
+    color: var(--text-muted);
+    padding: 8px 0 4px;
+    opacity: .7;
+  }
 </style>

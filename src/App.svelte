@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { listen } from "@tauri-apps/api/event";
+  import { showToast } from "./lib/stores.js";
   import Browse from "./lib/Browse.svelte";
   import Queue from "./lib/Queue.svelte";
   import Library from "./lib/Library.svelte";
@@ -28,10 +29,12 @@
   let anyRunning = $derived(torrentStatuses.length > 0 && torrentStatuses.some(t => t.state !== "paused" && t.state !== "stopped" && t.state !== "error" && t.state !== "seeding" && t.state !== "finished"));
   let tbarItem = $derived(activeItems[0] || null);
 
+  let notifyOnComplete = $state(true);
   let searchTimer;
   let appWindow = getCurrentWindow();
 
   onMount(() => {
+    invoke("get_settings").then(s => { notifyOnComplete = s.notify_on_complete; }).catch(() => {});
     const unlistenTray = listen("tray-action", (e) => {
       const action = e.payload;
       if (action === "show") {
@@ -58,9 +61,14 @@
       downSpeed = downloading.reduce((a, s) => a + (s.download_rate || 0), 0);
       upSpeed = statuses.reduce((a, s) => a + (s.upload_rate || 0), 0);
     });
+    const unlistenDownloads = listen("download-progress", (e) => {
+      const p = e.payload;
+      if (p.done && notifyOnComplete) showToast(`Download complete: ${p.name || p.slug}`, "success");
+    });
     return () => {
       unlistenTray.then(f => f());
       unlistenTorrent.then(f => f());
+      unlistenDownloads.then(f => f());
     };
   });
 

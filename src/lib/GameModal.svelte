@@ -18,11 +18,15 @@
   let selectedFiles = $state(new Set());
   let previewing = $state(false);
   let showFileSelector = $state(false);
+  let freeBytes = $state(0);
+
+  let skipFileSelector = $state(false);
 
   onMount(() => {
     parseFiles();
     parseGenres();
     parseTags();
+    invoke("get_settings").then(s => { skipFileSelector = s.skip_file_selector; }).catch(() => {});
   });
 
   function parseFiles() {
@@ -114,11 +118,30 @@
       showToast(`Failed to prepare download: ${e}`, "error");
       return;
     }
+    if (skipFileSelector) {
+      installing = true;
+      addStatus = null;
+      try {
+        await invoke("torrent_add", { magnet: game.magnet_link, slug: game.slug });
+        addStatus = "success";
+        navigateTimer = setTimeout(() => {
+          onnavigateTo?.("queue");
+          onclose?.();
+        }, 1500);
+      } catch (e) {
+        addStatus = "error";
+        console.error(e);
+      }
+      installing = false;
+      return;
+    }
     previewing = true;
     showFileSelector = false;
     addStatus = null;
     try {
-      torrentFiles = await invoke("torrent_preview", { magnet: game.magnet_link });
+      const preview = await invoke("torrent_preview", { magnet: game.magnet_link });
+      torrentFiles = preview.files;
+      freeBytes = preview.free_bytes;
       selectedFiles = new Set(torrentFiles.map((f) => f.index));
       showFileSelector = true;
     } catch (e) {
@@ -273,6 +296,15 @@
                   </label>
                 {/each}
               </div>
+              {#if freeBytes > 0}
+                {@const selectedTotal = torrentFiles.filter(f => selectedFiles.has(f.index)).reduce((a, f) => a + f.size, 0)}
+                {#if selectedTotal > freeBytes}
+                  <div class="disk-warning">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    Not enough disk space — need {formatSize(selectedTotal)}, only {formatSize(freeBytes)} free
+                  </div>
+                {/if}
+              {/if}
               <div class="file-select-actions">
                 <button class="download-torrent-btn" onclick={startDownload} disabled={installing || selectedFiles.size === 0}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -781,6 +813,21 @@
     color: var(--text-muted);
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
+  }
+
+  .disk-warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: rgba(220,38,38,.12);
+    color: #f87171;
+    font-size: .78rem;
+    border-bottom: 1px solid rgba(220,38,38,.25);
+  }
+
+  .disk-warning svg {
+    flex-shrink: 0;
   }
 
   .file-select-actions {

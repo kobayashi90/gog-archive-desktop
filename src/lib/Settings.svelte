@@ -75,6 +75,26 @@
     </div>
 
     <div class="section">
+      <h3>Behavior</h3>
+      <div class="field toggle">
+        <span>Notify on complete</span>
+        <div class="toggle-wrap">
+          <div class="switch" class:on={s.notify_on_complete} onclick={() => (s.notify_on_complete = !s.notify_on_complete)} role="switch" aria-checked={s.notify_on_complete} tabindex="0" onkeydown={(e) => e.key === 'Enter' && (s.notify_on_complete = !s.notify_on_complete)}>
+            <div class="switch-knob"></div>
+          </div>
+        </div>
+      </div>
+      <div class="field toggle">
+        <span>Skip file selector</span>
+        <div class="toggle-wrap">
+          <div class="switch" class:on={s.skip_file_selector} onclick={() => (s.skip_file_selector = !s.skip_file_selector)} role="switch" aria-checked={s.skip_file_selector} tabindex="0" onkeydown={(e) => e.key === 'Enter' && (s.skip_file_selector = !s.skip_file_selector)}>
+            <div class="switch-knob"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
       <h3>Advanced</h3>
       <label class="field">
         <span>Proxy URL (socks5://...)</span>
@@ -89,19 +109,6 @@
         <input type="number" min="0" bind:value={s.max_peers} />
       </label>
     </div>
-
-    <div class="section">
-      <h3>Seeding</h3>
-      <label class="field">
-        <span>Seed ratio limit</span>
-        <input type="number" min="0" step="0.1" bind:value={s.seed_ratio} />
-      </label>
-      <label class="field">
-        <span>Seed time limit (hours)</span>
-        <input type="number" min="0" bind:value={s.seed_hours} />
-      </label>
-    </div>
-
 
   </div>
 
