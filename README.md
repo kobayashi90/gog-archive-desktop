@@ -79,7 +79,15 @@ An AppImage build is also available for other distributions.
 ### macOS
 Download the `.dmg` from the [releases page](https://github.com/kobayashi90/gog-archive-desktop/releases), mount it, and drag the app to Applications.
 
-> **Note**: The app is not signed (no Apple Developer account). On first launch, right-click the app > Open, then click "Open" in the dialog. This is only needed once.
+> **Note**: The app is not signed (no Apple Developer account). If Gatekeeper blocks it:
+> 1. Right-click (or Ctrl+click) the app in Finder → **Open**, then click **Open** in the dialog.
+> 2. If that doesn't work, run this in Terminal:
+>    ```sh
+>    xattr -d com.apple.quarantine /Applications/GOG\ Archive\ Desktop.app
+>    ```
+> 3. If it's still blocked, go to **System Settings → Privacy & Security** — you'll see a notice like *"GOG Archive Desktop was blocked from opening"* — click **Open Anyway** and authenticate.
+>
+> Only needed once.
 
 ### Windows
 Download the `.msi` or `.exe` installer from the [releases page](https://github.com/kobayashi90/gog-archive-desktop/releases).
