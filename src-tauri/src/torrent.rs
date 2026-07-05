@@ -2,9 +2,10 @@ use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, TorrentStatsState};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,35 +50,38 @@ pub struct TorrentFileInfo {
 }
 
 struct RateState {
-    last_down: i64,
-    last_up: i64,
-    last_time: Instant,
+    samples: VecDeque<(Instant, i64, i64)>,
+    window: Duration,
 }
 
 impl RateState {
     fn new() -> Self {
         Self {
-            last_down: 0,
-            last_up: 0,
-            last_time: Instant::now(),
+            samples: VecDeque::new(),
+            window: Duration::from_secs(5),
         }
     }
 
     fn update(&mut self, down: i64, up: i64) -> (i64, i64) {
         let now = Instant::now();
-        let elapsed = now.duration_since(self.last_time).as_secs_f64();
-        if elapsed < 0.1 || (down < self.last_down && up < self.last_up) {
-            self.last_down = down;
-            self.last_up = up;
-            self.last_time = now;
-            return (0, 0);
+        self.samples.push_back((now, down, up));
+
+        let cutoff = now - self.window;
+        while self.samples.len() > 1 && self.samples[1].0 < cutoff {
+            self.samples.pop_front();
         }
-        let d = ((down - self.last_down) as f64 / elapsed) as i64;
-        let u = ((up - self.last_up) as f64 / elapsed) as i64;
-        self.last_down = down;
-        self.last_up = up;
-        self.last_time = now;
-        (d.max(0), u.max(0))
+
+        if self.samples.len() >= 2 {
+            let (t1, d1, u1) = *self.samples.front().unwrap();
+            let (t2, d2, u2) = *self.samples.back().unwrap();
+            let elapsed = t2.duration_since(t1).as_secs_f64();
+            if elapsed > 0.5 && d2 >= d1 && u2 >= u1 {
+                let d = ((d2 - d1) as f64 / elapsed) as i64;
+                let u = ((u2 - u1) as f64 / elapsed) as i64;
+                return (d.max(0), u.max(0));
+            }
+        }
+        (0, 0)
     }
 }
 

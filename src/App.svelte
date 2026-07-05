@@ -308,7 +308,7 @@
       </div>
       <div class="tbar-mid">
         <span class="tbar-speed">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v14"/><path d="m8 11 4 5 4-5"/><path d="M4 21h16"/></svg>
           <span class="tbar-down">{formatSpeed(downSpeed)}</span>
         </span>
 

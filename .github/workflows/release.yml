@@ -16,6 +16,33 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Verify version matches tag
+        run: |
+          SOURCE_VER="$(grep '"version"' src-tauri/tauri.conf.json | sed 's/.*"\(.*\)".*/\1/')"
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          if [ "$SOURCE_VER" != "$TAG_VER" ]; then
+            echo "ERROR: tauri.conf.json version ($SOURCE_VER) doesn't match tag ($GITHUB_REF_NAME)"
+            exit 1
+          fi
+
+      - name: Delete existing release (clean slate)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const existing = releases.find(r => r.tag_name === context.ref.replace('refs/tags/', ''));
+            if (existing) {
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: existing.id,
+              });
+              console.log('Deleted existing release: ' + existing.tag_name);
+            }
+
       - id: create
         uses: softprops/action-gh-release@v3
         with:

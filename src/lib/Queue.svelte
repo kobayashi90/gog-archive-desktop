@@ -279,6 +279,12 @@
     color: var(--text);
   }
 
+  .queue-stats .qstat-speed {
+    min-width: 8ch;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
   .queue-status {
     display: inline-flex;
     align-items: center;
