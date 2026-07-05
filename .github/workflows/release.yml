@@ -14,7 +14,7 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.id }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Verify version matches tag
         run: |
@@ -26,7 +26,7 @@ jobs:
           fi
 
       - name: Delete existing release (clean slate)
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: releases } = await github.rest.repos.listReleases({
@@ -44,7 +44,7 @@ jobs:
             }
 
       - id: create
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.1
         with:
           tag_name: ${{ github.ref_name }}
           name: 'GOG Archive Desktop ${{ github.ref_name }}'
@@ -72,15 +72,15 @@ jobs:
               src-tauri/target/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6.0.9
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -108,7 +108,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
 
       - name: Upload artifacts
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.1
         with:
           files: ${{ matrix.artifact-patterns }}
           tag_name: ${{ github.ref_name }}
