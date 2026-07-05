@@ -37,7 +37,7 @@
         <span>Download location</span>
         <div class="dir-row">
           <input type="text" bind:value={s.download_dir} />
-          <button class="browse-btn" on:click={pickFolder}>Browse</button>
+          <button class="browse-btn" onclick={pickFolder}>Browse</button>
         </div>
       </label>
     </div>
@@ -47,7 +47,7 @@
       <div class="field toggle">
         <span>DHT</span>
         <div class="toggle-wrap">
-          <div class="switch" class:on={s.dht} on:click={() => (s.dht = !s.dht)} role="switch" aria-checked={s.dht} tabindex="0" on:keydown={(e) => e.key === 'Enter' && (s.dht = !s.dht)}>
+          <div class="switch" class:on={s.dht} onclick={() => (s.dht = !s.dht)} role="switch" aria-checked={s.dht} tabindex="0" onkeydown={(e) => e.key === 'Enter' && (s.dht = !s.dht)}>
             <div class="switch-knob"></div>
           </div>
         </div>
@@ -55,7 +55,7 @@
       <div class="field toggle">
         <span>LSD</span>
         <div class="toggle-wrap">
-          <div class="switch" class:on={s.lsd} on:click={() => (s.lsd = !s.lsd)} role="switch" aria-checked={s.lsd} tabindex="0" on:keydown={(e) => e.key === 'Enter' && (s.lsd = !s.lsd)}>
+          <div class="switch" class:on={s.lsd} onclick={() => (s.lsd = !s.lsd)} role="switch" aria-checked={s.lsd} tabindex="0" onkeydown={(e) => e.key === 'Enter' && (s.lsd = !s.lsd)}>
             <div class="switch-knob"></div>
           </div>
         </div>
@@ -105,7 +105,7 @@
 
   </div>
 
-  <button class="save-btn" on:click={save} disabled={saving}>
+  <button class="save-btn" onclick={save} disabled={saving}>
     {saving ? "Saving..." : saved ? "Saved!" : "Save Settings"}
   </button>
 </div>

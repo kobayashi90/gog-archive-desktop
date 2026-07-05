@@ -1,29 +1,29 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  let { game, onviewGame, onfilterGenre } = $props();
 
-  export let game;
-  const dispatch = createEventDispatcher();
+  let letter = $derived(game.title ? game.title[0].toUpperCase() : "?");
 
-  let letter = game.title ? game.title[0].toUpperCase() : "?";
-  let firstGenres = [];
-  let extraGenres = 0;
-  let imgFailed = false;
+  let firstGenres = $derived.by(() => {
+    if (!game.genres) return [];
+    return game.genres.split(",").map((g) => g.trim()).filter(Boolean).slice(0, 3);
+  });
 
-  if (game.genres) {
-    const parts = game.genres.split(",").map((g) => g.trim()).filter(Boolean);
-    firstGenres = parts.slice(0, 3);
-    extraGenres = parts.length - 3;
-  }
+  let extraGenres = $derived.by(() => {
+    if (!game.genres) return 0;
+    return game.genres.split(",").map((g) => g.trim()).filter(Boolean).length - 3;
+  });
+
+  let imgFailed = $state(false);
 
   function handleGenreClick(g, e) {
     e.stopPropagation();
-    dispatch("filterGenre", g);
+    onfilterGenre?.(g);
   }
 </script>
 
-<button class="game-card" on:click={() => dispatch("viewGame", game.slug)}>
+<button class="game-card" onclick={() => onviewGame?.(game.slug)}>
   {#if game.image && !imgFailed}
-    <img src={game.image} alt={game.title} loading="lazy" on:error={() => (imgFailed = true)} />
+    <img src={game.image} alt={game.title} loading="lazy" onerror={() => (imgFailed = true)} />
   {:else}
     <div class="cover-letter" style="background: linear-gradient(135deg, #1a1a2e, #2d1b4e)">
       <span class="letter">{letter}</span>
@@ -39,7 +39,7 @@
     {/if}
     <div class="card-genres">
       {#each firstGenres as g}
-        <button type="button" class="card-genre" on:click={(e) => handleGenreClick(g, e)}>{g}</button>
+        <span role="button" tabindex="0" class="card-genre" onclick={(e) => handleGenreClick(g, e)} onkeydown={(e) => e.key === 'Enter' && handleGenreClick(g, e)}>{g}</span>
       {/each}
       {#if extraGenres > 0}
         <span class="card-genre more">+{extraGenres}</span>

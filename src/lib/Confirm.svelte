@@ -15,18 +15,22 @@
     if (e.key === "Escape") handleCancel();
     if (e.key === "Enter") handleConfirm();
   }
+
+  function handleOverlayClick(e) {
+    if (e.target === e.currentTarget) handleCancel();
+  }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if $confirmState}
-    <div class="confirm-overlay" on:click|self={handleCancel} on:keydown={handleKeydown} role="presentation">
+    <div class="confirm-overlay" onclick={handleOverlayClick} role="presentation">
       <div class="confirm-dialog" role="dialog" aria-modal="true">
         <h3>{$confirmState.title}</h3>
         <p>{$confirmState.message}</p>
         <div class="confirm-actions">
-          <button class="confirm-btn cancel" on:click={handleCancel}>Cancel</button>
-          <button class="confirm-btn confirm" on:click={handleConfirm}>{$confirmState.confirmLabel || "Delete"}</button>
+          <button class="confirm-btn cancel" onclick={handleCancel}>Cancel</button>
+          <button class="confirm-btn confirm" onclick={handleConfirm}>{$confirmState.confirmLabel || "Delete"}</button>
         </div>
       </div>
     </div>

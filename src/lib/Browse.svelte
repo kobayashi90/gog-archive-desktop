@@ -1,404 +1,186 @@
 <script>
-  import { createEventDispatcher, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import GameCard from "./GameCard.svelte";
+  import AdvancedSearch from "./AdvancedSearch.svelte";
+  import { showToast } from "./stores.js";
 
-  export let advFilters = {};
-  export let searchQuery = "";
+  let {
+    searchQuery,
+    advFilters,
+    ongameCount,
+    onviewGame,
+    onclearSearch,
+    onclearAdvFilters,
+    onfilterGenre,
+  } = $props();
 
-  const dispatch = createEventDispatcher();
+  let games = $state([]);
+  let loading = $state(true);
+  let sort = $state("title");
+  let showAdvSearch = $state(false);
 
-  let query = "";
-  let sort = "popularity_ranking";
-  let order = "ASC";
-  let games = [];
-  let total = 0;
-  let limit = 48;
-  let offset = 0;
-  let loading = true;
-  let error = false;
-  let isMounted = false;
+  let filtered = $derived.by(() => {
+    let result = games;
+    const q = (searchQuery || "").toLowerCase().trim();
+    if (q) {
+      result = result.filter(
+        (g) =>
+          g.title.toLowerCase().includes(q) ||
+          (g.developer || "").toLowerCase().includes(q) ||
+          (g.publisher || "").toLowerCase().includes(q)
+      );
+    }
 
-  onMount(() => {
-    isMounted = true;
+    if (advFilters) {
+      if (advFilters.genre && advFilters.genre.length) {
+        result = result.filter((g) => {
+          const gs = (g.genres || "").toLowerCase();
+          return advFilters.genre.some((fg) => gs.includes(fg));
+        });
+      }
+      if (advFilters.tag && advFilters.tag.length) {
+        result = result.filter((g) => {
+          const gs = (g.features || "").toLowerCase();
+          return advFilters.tag.some((fg) => gs.includes(fg));
+        });
+      }
+      if (advFilters.developer && advFilters.developer.length) {
+        result = result.filter((g) => advFilters.developer.some((d) => g.developer?.toLowerCase() === d));
+      }
+      if (advFilters.publisher && advFilters.publisher.length) {
+        result = result.filter((g) => advFilters.publisher.some((p) => g.publisher?.toLowerCase() === p));
+      }
+      if (advFilters.year && advFilters.year.length) {
+        result = result.filter((g) => {
+          const gy = g.release_date?.split("-")[0];
+          return gy && advFilters.year.includes(gy);
+        });
+      }
+    }
+
+    result.sort((a, b) => a.title.localeCompare(b.title));
+    return result;
   });
 
-  $: if (isMounted && searchQuery !== query) {
-    query = searchQuery;
-    offset = 0;
-    search();
-  }
+  let filteredCount = $derived(filtered.length);
 
-  $: if (isMounted && advFilters) {
-    offset = 0;
-    search();
-  }
+  $effect(() => {
+    ongameCount?.(filteredCount);
+  });
 
-  async function search() {
+  async function load() {
     loading = true;
-    error = false;
     try {
-      const result = await invoke("search_games", {
-        query,
-        limit,
-        offset,
-        genre: advFilters?.genre?.length ? advFilters.genre.join("||") : null,
-        tag: advFilters?.tag?.length ? advFilters.tag.join("||") : null,
-        developer: advFilters?.developer?.length ? advFilters.developer.join("||") : null,
-        publisher: advFilters?.publisher?.length ? advFilters.publisher.join("||") : null,
-        year: advFilters?.year?.length ? advFilters.year.join("||") : null,
-        sort,
-        order,
-      });
-      games = result.games;
-      total = result.total;
-      dispatch("gameCount", total);
+      games = await invoke("get_games");
     } catch (e) {
-      error = true;
+      showToast("Failed to load games: " + e, "error");
     }
     loading = false;
   }
 
-  function prevPage() { offset = Math.max(0, offset - limit); search(); }
-  function nextPage() { offset += limit; search(); }
-  function goPage(n) { offset = n * limit; search(); }
+  $effect(load);
 
-  function viewGame(slug) { dispatch("viewGame", slug); }
-
-  function filterGenre(g) { dispatch("filterGenre", g); }
-
-  function clearFilters() {
-    dispatch("clearAdvFilters");
-  }
-
-  function totalPages() { return Math.ceil(total / limit); }
-
-  function pageRange() {
-    const tp = totalPages();
-    const current = Math.floor(offset / limit);
-    const pages = [];
-    if (tp <= 7) {
-      for (let i = 0; i < tp; i++) pages.push(i);
-    } else {
-      pages.push(0);
-      if (current > 2) pages.push(-1);
-      for (let i = Math.max(1, current - 1); i <= Math.min(tp - 2, current + 1); i++) pages.push(i);
-      if (current < tp - 3) pages.push(-2);
-      pages.push(tp - 1);
-    }
-    return pages;
+  function handleAdvSearch(filters) {
+    showAdvSearch = false;
+    onclearAdvFilters?.();
+    onclearSearch?.();
+    advFilters = filters;
   }
 </script>
 
 <div class="browse">
-  {#if advFilters?.genre?.length || advFilters?.tag?.length || advFilters?.developer?.length || advFilters?.publisher?.length || advFilters?.year?.length || query}
-    <div id="genreBar">
-      <strong>Filtering by </strong>
-      {#if query}search: <strong>{query}</strong>{/if}
-      {#if advFilters.genre?.length}{#if query}; {/if}genre: <strong>{advFilters.genre.join(", ")}</strong>{/if}
-      {#if advFilters.tag?.length}{#if query || advFilters.genre?.length}; {/if}tag: <strong>{advFilters.tag.join(", ")}</strong>{/if}
-      {#if advFilters.developer?.length}{#if query || advFilters.genre?.length || advFilters.tag?.length}; {/if}developer: <strong>{advFilters.developer.join(", ")}</strong>{/if}
-      {#if advFilters.publisher?.length}{#if query || advFilters.genre?.length || advFilters.tag?.length || advFilters.developer?.length}; {/if}publisher: <strong>{advFilters.publisher.join(", ")}</strong>{/if}
-      {#if advFilters.year?.length}{#if query || advFilters.genre?.length || advFilters.tag?.length || advFilters.developer?.length || advFilters.publisher?.length}; {/if}year: <strong>{advFilters.year.join(", ")}</strong>{/if}
-      <span> &mdash; {total.toLocaleString()} game{total !== 1 ? "s" : ""}</span>
-      <button class="clear-genre" on:click={clearFilters}>Clear</button>
+  <div class="browse-header">
+    <div class="browse-header-left">
+      <h2>Browse</h2>
+      {#if filteredCount >= 0}
+        <span class="game-count">{filteredCount.toLocaleString()} games</span>
+      {/if}
     </div>
-  {/if}
+    <div class="browse-header-right">
+      <button class="adv-search-btn" onclick={() => (showAdvSearch = true)}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        Advanced
+        {#if advFilters && Object.keys(advFilters).some(k => advFilters[k]?.length)}
+          <span class="filter-dot"></span>
+        {/if}
+      </button>
+    </div>
+  </div>
 
   {#if loading}
-    <div id="loading" class="active">
-      <div class="spinner"></div>
+    <div class="loading">
+      <div class="spin"></div>
+      <span>Loading games...</span>
     </div>
-  {:else if error}
-    <div class="empty-state">
-      <p>Failed to load games. Is the API accessible?</p>
-      <button class="retry-btn" on:click={search}>Retry</button>
-    </div>
-  {:else if games.length === 0}
-    <div class="empty-state">
+  {:else if filtered.length === 0}
+    <div class="empty">
       <p>No games found</p>
-      <span class="sub">Try adjusting your search or filters</span>
     </div>
   {:else}
-    <div id="grid">
-      {#each games as game, i}
-        <GameCard {game} on:viewGame={() => viewGame(game.slug)} on:filterGenre={(e) => filterGenre(e.detail)} />
+    <div class="game-grid">
+      {#each filtered as game}
+        <GameCard {game} onviewGame={(slug) => onviewGame?.(slug)} onfilterGenre={(g) => onfilterGenre?.(g)} />
       {/each}
     </div>
-
-    {#if total > limit}
-      <div id="pagination">
-        <button disabled={offset === 0} on:click={prevPage}>&laquo; Prev</button>
-        {#each pageRange() as p}
-          {#if p < 0}
-            <span class="page-info">&hellip;</span>
-          {:else}
-            <button class:active={offset === p * limit} on:click={() => goPage(p)}>{p + 1}</button>
-          {/if}
-        {/each}
-        <button disabled={offset + limit >= total} on:click={nextPage}>Next &raquo;</button>
-      </div>
-    {/if}
-
-    <footer>
-      <div class="footer-inner">
-        <span class="footer-left">{total.toLocaleString()} games cataloged</span>
-        <span class="footer-center"><button type="button" class="link-btn" on:click={() => invoke("open_url", { url: "https://discord.gg/yuvnx7FS89" })}>Discord</button><span class="footer-sep">|</span><button type="button" class="link-btn" on:click={() => invoke("open_url", { url: "https://status.squid-board.org" })}>Status</button><span class="footer-sep">|</span><button type="button" class="link-btn" on:click={() => invoke("open_url", { url: "https://give.calibour.com/49680ed027b06ced091ae39023b64151" })}>Donate</button></span>
-        <span class="footer-credit">In Cooperation with <img src="/privateers.png" alt="Privateers.Wiki" class="footer-logo"> <button type="button" class="link-btn" on:click={() => invoke("open_url", { url: "https://privateers.wiki" })}>Privateers.Wiki</button></span>
-      </div>
-    </footer>
   {/if}
 </div>
 
+{#if showAdvSearch}
+  <AdvancedSearch currentFilters={advFilters || {}} onapply={handleAdvSearch} onclose={() => (showAdvSearch = false)} />
+{/if}
+
 <style>
-  #genreBar {
+  .browse { padding: 12px 12px 0; display: flex; flex-direction: column; gap: 12px; flex: 1; overflow-y: auto; }
+
+  .browse-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+  .browse-header-left { display: flex; align-items: center; gap: 10px; }
+
+  .browse-header-left h2 { font-size: 18px; font-weight: 600; color: var(--text); margin: 0; }
+
+  .game-count { font-size: .78rem; color: var(--text-muted); }
+
+  .browse-header-right { display: flex; align-items: center; gap: 6px; }
+
+  .adv-search-btn {
     display: flex;
-    align-items: center;
-    padding: 10px 16px;
-    margin-bottom: 16px;
-    border-radius: var(--radius-sm);
-    background: rgba(255,255,255,.04);
-    border: 1px solid rgba(255,255,255,.1);
-    font-size: .85rem;
-    color: var(--text);
-    gap: 4px;
-    flex-wrap: wrap;
-  }
-
-  #genreBar strong {
-    color: var(--text);
-  }
-
-  .clear-genre {
-    margin-left: 12px;
-    padding: 3px 12px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: .78rem;
-    cursor: pointer;
-    transition: all .2s;
-  }
-
-  .clear-genre:hover {
-    border-color: #ef444466;
-    background: rgba(239,68,68,.1);
-    color: #ef4444;
-  }
-
-  #grid {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 16px;
-    margin-bottom: 32px;
-    isolation: isolate;
-  }
-
-  #loading {
-    justify-content: center;
-    padding: 60px 0;
-  }
-
-  #loading.active {
-    display: flex;
-  }
-
-  .spinner {
-    width: 36px;
-    height: 36px;
-    border: 3px solid var(--border);
-    border-top-color: var(--text-muted);
-    border-radius: 50%;
-    animation: spin .7s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text-muted);
-    font-size: .9rem;
-  }
-
-  .empty-state p {
-    margin-bottom: 4px;
-  }
-
-  .empty-state .sub {
-    font-size: .82rem;
-    color: var(--text-muted);
-  }
-
-  .retry-btn {
-    margin-top: 12px;
-    padding: 8px 24px;
-    background: var(--accent);
-    color: #fff;
-    border-radius: var(--radius-sm);
-    font-size: .85rem;
-    cursor: pointer;
-    transition: background .15s;
-  }
-
-  .retry-btn:hover {
-    background: var(--accent-hover, #8a6cff);
-  }
-
-  footer {
-    padding: 24px;
-    font-size: .8rem;
-    color: var(--text-muted);
-    border-top: 1px solid var(--border);
-  }
-
-  .footer-inner {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 24px;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .footer-left,
-  .footer-center,
-  .footer-credit {
-    flex: 1;
-  }
-
-  .footer-left {
-    text-align: left;
-  }
-
-  .footer-sep {
-    color: var(--border);
-    margin: 0 2px;
-  }
-
-  .footer-center {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-  }
-
-  .footer-credit {
-    display: inline-flex;
     align-items: center;
     gap: 5px;
-    justify-content: flex-end;
-  }
-
-  .link-btn {
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    color: var(--text-muted);
-    cursor: pointer;
-    text-decoration: none;
-  }
-
-  .link-btn:hover {
-    color: var(--text);
-  }
-
-  .footer-logo {
-    width: 18px;
-    height: 18px;
-    border-radius: 3px;
-  }
-
-  #pagination {
-    text-align: center;
-    overflow-x: auto;
-    white-space: nowrap;
-    padding: 16px 0 40px;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  #pagination::-webkit-scrollbar { display: none; }
-
-  #pagination button {
-    padding: 8px 16px;
+    padding: 5px 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--text);
-    font-size: .85rem;
-    cursor: pointer;
-    transition: all .2s;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 2px;
-  }
-
-  #pagination button:hover:not(:disabled) {
-    border-color: var(--text-muted);
-    background: rgba(255,255,255,.04);
-  }
-
-  #pagination button:disabled {
-    opacity: .35;
-    cursor: not-allowed;
-  }
-
-  #pagination button.active {
-    background: #2a2a3a;
-    border-color: #2a2a3a;
-    color: #fff;
-  }
-
-  .page-info {
-    font-size: .85rem;
+    background: transparent;
     color: var(--text-muted);
-    padding: 0 8px;
+    font-size: .75rem;
+    cursor: pointer;
+    transition: all .15s;
+    position: relative;
   }
 
-  @media (max-width: 900px) {
-    #grid {
-      grid-template-columns: repeat(4, 1fr);
-    }
+  .adv-search-btn:hover {
+    border-color: var(--text-muted);
+    color: var(--text);
   }
 
-  @media (max-width: 640px) {
-    #grid {
-      gap: 6px;
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    #pagination {
-      display: flex;
-      justify-content: center;
-      overflow: visible;
-      white-space: normal;
-      padding: 12px 2px 24px;
-      gap: 0;
-    }
-    #pagination button {
-      margin: 0 1.5px;
-      flex: 1;
-      min-width: 0;
-      max-width: 80px;
-      padding: 10px 6px;
-    }
-    .page-info {
-      flex: none;
-      width: 20px;
-      padding: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+  .filter-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent2);
+    position: absolute;
+    top: 3px;
+    right: 3px;
   }
+
+  .game-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+  }
+
+  .loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-muted); }
+
+  .spin { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: .85rem; }
 </style>
