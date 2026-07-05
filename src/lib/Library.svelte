@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { showConfirm } from "./stores.js";
   import { showToast } from "./stores.js";
@@ -54,9 +54,11 @@
     deleting = null;
   }
 
-  poll();
-  let interval = setInterval(poll, 5000);
-  onDestroy(() => clearInterval(interval));
+  onMount(() => {
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  });
 </script>
 
 <div class="library">
