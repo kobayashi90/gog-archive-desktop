@@ -1,277 +1,358 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { showToast, showConfirm } from "./stores.js";
+  import { showConfirm } from "./stores.js";
+  import { showToast } from "./stores.js";
 
   let { torrentStatuses, onviewGame } = $props();
 
   let torrents = $derived(torrentStatuses);
-
-  function togglePause(slug, paused) {
-    if (paused) invoke("resume_torrent", { slug });
-    else invoke("pause_torrent", { slug });
-  }
-
-  async function removeTorrent(slug) {
-    showConfirm("Remove Torrent", "Remove this torrent and its files?", async () => {
-      try {
-        await invoke("remove_torrent", { slug });
-        showToast("Torrent removed", "success");
-      } catch (e) {
-        showToast("Failed to remove torrent: " + e, "error");
-      }
-    });
-  }
-
-  async function deleteTorrent(slug) {
-    showConfirm("Delete Torrent", "Delete this torrent and all downloaded files?", async () => {
-      try {
-        await invoke("delete_torrent", { slug });
-        showToast("Torrent deleted", "success");
-      } catch (e) {
-        showToast("Failed to delete torrent: " + e, "error");
-      }
-    });
-  }
-
-  let expanded = $state({});
-
-  function toggleExpanded(slug) {
-    expanded = { ...expanded, [slug]: !expanded[slug] };
-  }
-
-  function speedDisplay(bytesPerSec) {
-    if (bytesPerSec < 1024) return bytesPerSec + " B/s";
-    if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + " kB/s";
-    return (bytesPerSec / 1024 / 1024).toFixed(1) + " MB/s";
-  }
+  let removing = $state(null);
 
   function fmt(bytes) {
-    if (!bytes) return "0 B";
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " kB";
-    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
-    return (bytes / 1024 / 1024 / 1024).toFixed(2) + " GB";
+    if (bytes <= 0) return "\u2014";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0, v = bytes;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(v >= 10 ? 0 : 1) + " " + units[i];
   }
 
-  function progressPercent(t) {
-    if (!t.totalBytes) return 0;
-    return Math.min(100, ((t.progressBytes / t.totalBytes) * 100));
+  function fmtEta(secs) {
+    if (secs <= 0 || !isFinite(secs)) return "\u2014";
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
   }
+
+  function fmtSpeed(bytes) {
+    if (bytes <= 0) return "\u2014";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0, v = bytes;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(2) + " " + units[i] + "/s";
+  }
+
+  async function pauseAll() {
+    const active = torrents.filter((t) => t.state === "downloading" || t.state === "metadata" || t.state === "checking");
+    for (const t of active) {
+      try { await invoke("torrent_pause", { slug: t.slug }); } catch (e) {}
+    }
+  }
+
+  async function resumeAll() {
+    const paused = torrents.filter((t) => t.state === "paused" || t.state === "error" || t.state === "stopped");
+    for (const t of paused) {
+      try { await invoke("torrent_resume", { slug: t.slug }); } catch (e) {}
+    }
+  }
+
+  async function pause(slug) { await invoke("torrent_pause", { slug }); }
+  async function resume(slug) { await invoke("torrent_resume", { slug }); }
+  function confirmRemove(t) {
+    showConfirm(
+      `Remove "${t.title || t.name}"?`,
+      `This will remove the torrent from the download queue. The downloaded files will not be deleted.`,
+      () => doRemove(t),
+    );
+  }
+
+  async function doRemove(t) {
+    removing = t.slug;
+    try {
+      await invoke("torrent_remove", { slug: t.slug });
+      showToast(`"${t.title || t.name}" removed from queue`, "success");
+    } catch (e) {
+      showToast(`Failed to remove "${t.title || t.name}": ${e}`, "error");
+    }
+    removing = null;
+  }
+
+  async function openFolder(slug) {
+    try { await invoke("open_folder", { slug }); } catch (e) { console.error(e); }
+  }
+
+  let active = $derived(torrents.filter((t) => t.state !== "seeding" && t.state !== "finished" && (t.progress || 0) < 100));
+  let completed = $derived(torrents.filter((t) => t.state === "seeding" || t.state === "finished"));
 </script>
 
 <div class="queue">
-  {#each torrents as t (t.slug)}
-    <div class="torrent-row" class:expanded={expanded[t.slug]}>
-      <div class="torrent-main" onclick={() => toggleExpanded(t.slug)} onkeydown={(e) => e.key === 'Enter' && toggleExpanded(t.slug)} role="button" tabindex="0" aria-expanded={!!expanded[t.slug]}>
-        <div class="torrent-left">
-          <div class="torrent-icon" class:active={t.state === "downloading"} class:seeding={t.state === "seeding"} class:paused-state={t.state === "paused"}>
-            {#if t.state === "downloading"}
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            {:else if t.state === "seeding"}
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            {:else}
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-            {/if}
-          </div>
-          <div class="torrent-info">
-            <div class="torrent-name" onclick={() => onviewGame?.(t.slug)} onkeydown={(e) => e.key === 'Enter' && onviewGame?.(t.slug)} role="button" tabindex="0">{t.name}</div>
-            <div class="torrent-progress-wrap">
-              <div class="progress-bar">
-                <div class="progress-fill" style="width: {progressPercent(t)}%"></div>
-              </div>
-              <span class="progress-text">{fmt(t.progressBytes)} / {fmt(t.totalBytes)}</span>
-            </div>
-          </div>
-        </div>
-        <div class="torrent-right">
-          {#if t.downloadSpeed}
-            <div class="speed down">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="7 13 12 18 17 13"/><line x1="12" y1="18" x2="12" y2="6"/></svg>
-              {speedDisplay(t.downloadSpeed)}
-            </div>
-          {/if}
-          {#if t.uploadSpeed}
-            <div class="speed up">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="17 11 12 6 7 11"/><line x1="12" y1="18" x2="12" y2="6"/></svg>
-              {speedDisplay(t.uploadSpeed)}
-            </div>
-          {/if}
-          <div class="torrent-actions">
-            <button class="action-btn pause-btn" onclick={() => togglePause(t.slug, t.state === "paused")} aria-label={t.state === "paused" ? "Resume" : "Pause"} title={t.state === "paused" ? "Resume" : "Pause"}>
-              {#if t.state === "paused"}
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              {:else}
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-              {/if}
-            </button>
-            <button class="action-btn action-danger" onclick={() => removeTorrent(t.slug)} aria-label="Remove torrent" title="Remove torrent">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+  {#if torrents.length === 0}
+    <div class="empty-state">No active downloads. Browse games and click "Download" to start.</div>
   {:else}
-    <div class="empty-queue">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M16 16s-1.5-2-4-2-4 2-4 2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-      <p>No active downloads</p>
-    </div>
-  {/each}
+    {#if active.length}
+      <h3 class="queue-section-title">Downloading ({active.length})</h3>
+      <div class="queue-list">
+        {#each active as t}
+          <div class="queue-item">
+            {#if t.image}
+              <img class="queue-thumb" src={t.image} alt="" loading="lazy" onerror={(e) => e.target.style.display = "none"} />
+            {:else}
+              <div class="queue-thumb queue-thumb-letter">{(t.title || t.name || "?")[0].toUpperCase()}</div>
+            {/if}
+            <div class="queue-body">
+              <div class="queue-name" title={t.title || t.name}>{t.title || t.name}</div>
+              <div class="queue-bar-track">
+                <div class="queue-bar-fill" style="width: {Math.min(t.progress * 100, 100)}%"></div>
+              </div>
+              <div class="queue-stats">
+                <span class="qstat-pct">{(t.progress * 100).toFixed(1)}%</span>
+                <span class="qstat-speed">&darr; {fmtSpeed(t.download_rate)}</span>
+                {#if t.eta > 0 && Number.isFinite(t.eta)}
+                  <span class="qstat-eta">{fmtEta(t.eta)}</span>
+                {/if}
+
+              </div>
+            </div>
+            <div class="queue-actions">
+              {#if t.state === "paused" || t.state === "error" || t.state === "stopped"}
+                <button class="queue-btn" onclick={() => resume(t.slug)}>Resume</button>
+              {:else}
+                <button class="queue-btn" onclick={() => pause(t.slug)}>Pause</button>
+              {/if}
+              <button class="queue-btn danger" onclick={() => confirmRemove(t)} disabled={removing === t.slug}>
+                {#if removing === t.slug}
+                  <span class="qspinner"></span>
+                {:else}
+                  Remove
+                {/if}
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    {#if completed.length}
+      <h3 class="queue-section-title">Completed ({completed.length})</h3>
+      <div class="queue-list">
+        {#each completed as t}
+          <div class="queue-item done">
+            {#if t.image}
+              <img class="queue-thumb" src={t.image} alt="" loading="lazy" onerror={(e) => e.target.style.display = "none"} />
+            {:else}
+              <div class="queue-thumb queue-thumb-letter">{(t.title || t.name || "?")[0].toUpperCase()}</div>
+            {/if}
+            <div class="queue-body">
+              <div class="queue-name" title={t.title || t.name}>{t.title || t.name}</div>
+              <div class="queue-status">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                Seeding &middot; {fmt(t.total_upload)} uploaded
+                {#if t.verified}
+                  <span class="verified-badge" title="Download verified against game metadata">&#10003;</span>
+                {:else if t.progress >= 1}
+                  <span class="unverified-badge" title="Unable to verify download completeness">?</span>
+                {/if}
+              </div>
+            </div>
+            <div class="queue-actions">
+              <button class="queue-btn" onclick={() => openFolder(t.slug)} title="Open folder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+              </button>
+              <button class="queue-btn danger" onclick={() => confirmRemove(t)} disabled={removing === t.slug}>
+                {#if removing === t.slug}
+                  <span class="qspinner"></span>
+                {:else}
+                  Remove
+                {/if}
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {/if}
 </div>
 
 <style>
-  .queue { padding: 8px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .queue { padding: 0; }
 
-  .queue > :global(* + *) { margin-top: 0; }
+  .empty-state {
+    text-align: center;
+    padding: 64px 0;
+    font-size: .85rem;
+    color: var(--text-muted);
+  }
 
-  .torrent-row {
+  .queue-section-title {
+    font-size: .78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    margin: 4px 0 10px;
+  }
+
+  .queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+
+  .queue-item {
+    display: flex;
+    gap: 14px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
     transition: border-color .15s;
-  }
-  .torrent-row:hover { border-color: var(--border-hover); }
-  .torrent-row.expanded { border-color: var(--text-muted); }
-
-  .torrent-main {
-    display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    cursor: pointer;
-    user-select: none;
-    gap: 12px;
   }
 
-  .torrent-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
+  .queue-item:hover {
+    border-color: var(--border-hover);
   }
 
-  .torrent-icon {
+  .queue-item.done {
+    border-color: rgba(0,212,170,.15);
+    background: rgba(0,212,170,.02);
+  }
+
+  .queue-thumb {
+    width: 40px;
+    height: 52px;
+    object-fit: cover;
+    border-radius: 4px;
     flex-shrink: 0;
-    width: 32px;
-    height: 32px;
+    background: var(--surface);
+  }
+
+  .queue-thumb-letter {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 50%;
-    background: rgba(0,212,170,.08);
-    color: var(--accent2);
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: linear-gradient(135deg, #1a1a2e, #2d1b4e);
   }
 
-  .torrent-icon.active { background: rgba(0,212,170,.15); }
-  .torrent-icon.seeding { background: rgba(255,193,7,.1); color: #ffc107; }
-  .torrent-icon.paused-state { background: rgba(255,255,255,.05); color: var(--text-muted); }
+  .queue-body {
+    flex: 1;
+    min-width: 0;
+  }
 
-  .torrent-info { min-width: 0; flex: 1; }
-
-  .torrent-name {
-    font-size: .8rem;
+  .queue-name {
+    font-size: .85rem;
     font-weight: 600;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     margin-bottom: 4px;
-    display: inline-block;
-    transition: color .15s;
   }
 
-  .torrent-name:hover { color: var(--accent2); }
-
-  .torrent-progress-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .progress-bar {
-    flex: 1;
-    height: 4px;
-    background: rgba(255,255,255,.08);
-    border-radius: 2px;
+  .queue-bar-track {
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
     overflow: hidden;
-    min-width: 60px;
+    border: 1px solid var(--border);
+    margin-bottom: 3px;
   }
 
-  .progress-fill {
+  .queue-bar-fill {
     height: 100%;
-    background: var(--accent);
-    border-radius: 2px;
-    transition: width 0.5s ease;
+    background: linear-gradient(90deg, #f59e0b, #f97316);
+    border-radius: 3px;
   }
 
-  .progress-text {
-    font-size: .65rem;
+  .queue-stats {
+    display: flex;
+    gap: 14px;
+    font-size: .68rem;
     color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .queue-stats .qstat-pct {
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .queue-stats .qstat-speed {
+    min-width: 8ch;
+    flex-shrink: 0;
     white-space: nowrap;
   }
 
-  .torrent-right {
-    display: flex;
+  .queue-status {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
+    font-size: .82rem;
+    font-weight: 600;
+    color: var(--accent2);
+  }
+
+  .verified-badge {
+    color: #22c55e;
+    font-size: .9rem;
+    font-weight: 700;
+  }
+
+  .unverified-badge {
+    color: #f59e0b;
+    font-size: .75rem;
+    font-weight: 700;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #f59e0b;
+    border-radius: 50%;
+  }
+
+  .queue-actions {
+    display: flex;
+    gap: 4px;
     flex-shrink: 0;
   }
 
-  .speed {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    font-size: .68rem;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .speed.down { color: var(--accent2); }
-  .speed.up { color: #ffc107; }
-
-  .torrent-actions {
-    display: flex;
-    gap: 2px;
-  }
-
-  .action-btn {
-    width: 26px;
-    height: 26px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-muted);
+  .queue-btn {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
     background: transparent;
+    color: var(--text-muted);
+    font-size: .72rem;
     cursor: pointer;
     transition: all .15s;
   }
 
-  .action-btn:hover {
-    background: rgba(255,255,255,.08);
+  .queue-btn:hover {
+    border-color: var(--text-muted);
     color: var(--text);
+    background: rgba(255,255,255,.04);
   }
 
-  .action-btn.action-danger:hover {
-    background: rgba(220,38,38,.15);
+  .queue-btn.danger {
     color: #ef4444;
+    border-color: #ef444433;
   }
 
-  .pause-btn:hover { color: var(--accent2); }
-
-  .empty-queue {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    color: var(--text-muted);
-    opacity: .6;
+  .queue-btn.danger:hover {
+    background: rgba(239,68,68,.12);
+    border-color: #ef444466;
   }
 
-  .empty-queue p { font-size: .85rem; }
+  .queue-btn:disabled { opacity: 0.5; cursor: default; }
+  .queue-btn:disabled:hover { background: transparent; border-color: var(--border); color: var(--text-muted); }
+
+  .qspinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: qspin .6s linear infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes qspin { to { transform: rotate(360deg); } }
 </style>

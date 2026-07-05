@@ -2,17 +2,14 @@
   let { game, onviewGame, onfilterGenre } = $props();
 
   let letter = $derived(game.title ? game.title[0].toUpperCase() : "?");
-
   let firstGenres = $derived.by(() => {
     if (!game.genres) return [];
     return game.genres.split(",").map((g) => g.trim()).filter(Boolean).slice(0, 3);
   });
-
   let extraGenres = $derived.by(() => {
     if (!game.genres) return 0;
     return game.genres.split(",").map((g) => g.trim()).filter(Boolean).length - 3;
   });
-
   let imgFailed = $state(false);
 
   function handleGenreClick(g, e) {

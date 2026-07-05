@@ -3,9 +3,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
 
-  let s = {};
-  let saving = false;
-  let saved = false;
+  let s = $state({});
+  let saving = $state(false);
+  let saved = $state(false);
 
   onMount(async () => {
     try { s = await invoke("get_settings"); } catch (e) { console.error("Failed to load settings", e); }

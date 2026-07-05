@@ -1,637 +1,850 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { showToast } from "./stores.js";
+  import { showConfirm, showToast } from "./stores.js";
 
-  let {
-    game,
-    onclose,
-    onnavigateTo,
-    onfilterGenre,
-    onfilterTag,
-    onfilterDeveloper,
-    onfilterPublisher,
-    onfilterYear,
-  } = $props();
+  let { game, onclose, onnavigateTo, onfilterGenre, onfilterTag, onfilterDeveloper, onfilterPublisher, onfilterYear } = $props();
 
-  let imageFailed = $state(false);
-  let details = $state(null);
-  let loading = $state(false);
-  let dlStatus = $state(null);
-  let selectedOs = $state("windows");
-  let dlType = $state("installer");
+  let installing = $state(false);
+  let addStatus = $state(null);
+  let navigateTimer = $state(null);
+  let showAllFiles = $state(false);
+  let files = $state([]);
+  let totalFiles = $state(0);
+  let genres = $state([]);
+  let tags = $state([]);
+  let imageError = $state(false);
+  let torrentFiles = $state([]);
+  let selectedFiles = $state(new Set());
+  let previewing = $state(false);
+  let showFileSelector = $state(false);
 
-  let genres = $derived.by(() => {
-    if (!game?.genres) return [];
-    return game.genres.split(",").map((g) => g.trim()).filter(Boolean);
+  onMount(() => {
+    parseFiles();
+    parseGenres();
+    parseTags();
   });
 
-  let features = $derived.by(() => {
-    if (!game?.features) return [];
-    return game.features.split(",").map((f) => f.trim()).filter(Boolean);
-  });
-
-  let langs = $derived.by(() => {
-    if (!game?.languages) return [];
-    return game.languages.split(",").map((l) => l.trim()).filter(Boolean);
-  });
-
-  let year = $derived(game?.release_date ? game.release_date.split("-")[0] : "N/A");
-
-  async function loadDetails() {
-    if (loading || details) return;
-    loading = true;
-    try {
-      details = await invoke("get_game_details", { slug: game.slug });
-    } catch (e) {
-      showToast("Failed to load game details: " + e, "error");
+  function parseFiles() {
+    if (game.files) {
+      try {
+        const parsed = typeof game.files === "string" ? JSON.parse(game.files) : game.files;
+        const gameFiles = parsed.game || [];
+        const goodies = parsed.goodie || [];
+        const mapped = [
+          ...gameFiles.map((f) => ({ ...f, type: "game" })),
+          ...goodies.map((f) => ({ ...f, type: "goodie" })),
+        ];
+        files = mapped;
+        totalFiles = mapped.length;
+      } catch (e) {
+        files = [];
+      }
     }
-    loading = false;
   }
 
-  let osBuilds = $derived(details?.downloads?.find(d => d.os === selectedOs)?.builds || []);
-  let filteredBuilds = $derived(dlType === "installer"
-    ? osBuilds.filter(b => !b.name.toLowerCase().includes("bonus"))
-    : osBuilds.filter(b => b.name.toLowerCase().includes("bonus"))
-  );
+  function parseGenres() {
+    if (!game.raw_genres) return;
+    try {
+      genres = JSON.parse(game.raw_genres);
+    } catch (e) {
+      genres = [];
+    }
+  }
 
-  function handleKeydown(e) {
-    if (e.key === "Escape") onclose?.();
+  function parseTags() {
+    if (!game.raw_tags) return;
+    try {
+      tags = JSON.parse(game.raw_tags);
+    } catch (e) {
+      tags = [];
+    }
+  }
+
+  function formatSize(size) {
+    if (!size) return "\u2014";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0, v = size;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(v >= 10 ? 0 : 1) + " " + units[i];
+  }
+
+  function fmtSizeStr(s) {
+    if (!s) return "";
+    if (typeof s === "number") {
+      const n = s;
+      if (n < 1024) return n.toFixed(1) + " B";
+      if (n < 1024 ** 2) return (n / 1024).toFixed(1) + " KB";
+      if (n < 1024 ** 3) return (n / 1024 ** 2).toFixed(1) + " MB";
+      return (n / 1024 ** 3).toFixed(2) + " GB";
+    }
+    return s;
+  }
+
+  function fmtRating(r) {
+    if (!r) return "";
+    const full = Math.round(r);
+    return "\u2605".repeat(full) + "\u2606".repeat(5 - full);
+  }
+
+  function fmtYear(ts) {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    return d.getFullYear();
+  }
+
+  async function download() {
+    if (!game.magnet_link) return;
+    try {
+      const exists = await invoke("check_download_dir", { slug: game.slug });
+      if (exists) {
+        const confirmed = await new Promise((resolve) => {
+          showConfirm(
+            `Delete existing folder for "${game.title}"?`,
+            `A download folder for this game already exists. Delete it and start fresh, or cancel?`,
+            () => resolve(true),
+            () => resolve(false),
+            "Delete folder",
+          );
+        });
+        if (!confirmed) return;
+        await invoke("delete_download_dir", { slug: game.slug });
+      }
+    } catch (e) {
+      showToast(`Failed to prepare download: ${e}`, "error");
+      return;
+    }
+    previewing = true;
+    showFileSelector = false;
+    addStatus = null;
+    try {
+      torrentFiles = await invoke("torrent_preview", { magnet: game.magnet_link });
+      selectedFiles = new Set(torrentFiles.map((f) => f.index));
+      showFileSelector = true;
+    } catch (e) {
+      showToast(`Failed to read torrent files: ${e}`, "error");
+    }
+    previewing = false;
+  }
+
+  function toggleFile(idx) {
+    const next = new Set(selectedFiles);
+    if (next.has(idx)) { next.delete(idx); } else { next.add(idx); }
+    selectedFiles = next;
+  }
+
+  function toggleAll() {
+    if (selectedFiles.size === torrentFiles.length) {
+      selectedFiles = new Set();
+    } else {
+      selectedFiles = new Set(torrentFiles.map((f) => f.index));
+    }
+  }
+
+  async function startDownload() {
+    if (selectedFiles.size === 0) return;
+    installing = true;
+    addStatus = null;
+    try {
+      await invoke("torrent_add", {
+        magnet: game.magnet_link,
+        slug: game.slug,
+        selectedFiles: Array.from(selectedFiles),
+      });
+      addStatus = "success";
+      navigateTimer = setTimeout(() => {
+        onnavigateTo?.("queue");
+        onclose?.();
+      }, 1500);
+    } catch (e) {
+      addStatus = "error";
+      console.error(e);
+    }
+    installing = false;
+  }
+
+  function close() {
+    clearTimeout(navigateTimer);
+    onclose?.();
   }
 
   function handleOverlayClick(e) {
-    if (e.target === e.currentTarget) onclose?.();
+    if (e.target === e.currentTarget || e.target.classList.contains('modal-backdrop')) close();
   }
 
-  async function downloadBuild(build) {
-    dlStatus = { slug: build.slug, progress: "preparing" };
-    invoke("download_game", { slug: build.slug, name: build.name, os: selectedOs, type: dlType });
+  function handleKeydown(e) { if (e.key === "Escape") close(); }
+
+  function visibleFiles() {
+    if (showAllFiles || files.length <= 8) return files;
+    return files.slice(0, 8);
   }
 
-  const OS_ICONS = {
-    windows: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M0 0h11.4v11.4H0zM12.6 0H24v11.4H12.6zM0 12.6h11.4V24H0zM12.6 12.6H24V24H12.6z"/></svg>',
-    mac: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C7.5 2 4 5.5 4 10c0 3.5 2 6.5 5 8l-1 4h8l-1-4c3-1.5 5-4.5 5-8 0-4.5-3.5-8-8-8z"/><circle cx="12" cy="10" r="2"/></svg>',
-    linux: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>',
-  };
+  function hiddenFiles() {
+    if (showAllFiles || files.length <= 8) return [];
+    return files.slice(8);
+  }
+
+  function handleImageError() { imageError = true; }
+
+  let letter = $derived(game.title ? game.title[0].toUpperCase() : "?");
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-{#if game}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-overlay" onclick={handleOverlayClick} role="presentation">
-    <div class="modal" role="dialog" aria-modal="true" aria-label={game.title}>
-      <button class="close-btn" onclick={() => onclose?.()} aria-label="Close">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-
-      <div class="modal-scroll">
-        <div class="hero">
-          {#if game.image && !imageFailed}
-            <img src={game.image} alt={game.title}
-              onerror={() => (imageFailed = true)}
-            />
-          {:else}
-            <div class="hero-placeholder">
-              <span class="hero-letter">{game.title[0]?.toUpperCase() || "?"}</span>
-            </div>
+<div class="modal-backdrop" onclick={handleOverlayClick} role="presentation">
+  <div class="modal-content" role="dialog">
+    <button class="modal-close" onclick={close} aria-label="Close">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <div class="modal-scroll">
+    <div class="detail-header">
+      <div class="detail-cover" class:no-image={!game.image || imageError}>
+        {#if game.image && !imageError}
+          <img src={game.image} alt={game.title} onerror={handleImageError} />
+        {/if}
+        <div class="cover-letter">{letter}</div>
+      </div>
+      <div class="detail-info">
+        <h2>{game.title}</h2>
+        <div class="dev-pub">
+          {#if game.developer}
+            <button type="button" class="dev-link" onclick={() => onfilterDeveloper?.(game.developer)}>{game.developer}</button>
           {/if}
-          <div class="hero-overlay">
-            <h1>{game.title}</h1>
-            {#if game.developer || game.publisher}
-              <p class="dev-pub">
-                {game.developer}{#if game.developer && game.publisher} / {/if}{game.publisher}
-              </p>
-            {/if}
-          </div>
+          {#if game.developer && game.publisher} &middot; {/if}
+          {#if game.publisher}
+            <button type="button" class="pub-link" onclick={() => onfilterPublisher?.(game.publisher)}>{game.publisher}</button>
+          {/if}
+          {#if game.release_date}
+            &middot; <button type="button" class="year-link" onclick={() => onfilterYear?.(game.release_date.slice(0, 4))}>{game.release_date.slice(0, 4)}</button>
+          {/if}
         </div>
-
-        <div class="content">
-          <!-- Ratings & Meta -->
-          <div class="meta-row">
-            {#if game.rating}
-              <div class="meta-chip rating">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l2.5 7.5L22 12l-7.5 1.5L12 21l-2.5-7.5L2 12l7.5-1.5z"/></svg>
-                {game.rating.toFixed(1)}
-              </div>
-            {/if}
-            <div class="meta-chip">{year}</div>
-            {#if game.game_type}
-              <div class="meta-chip">{game.game_type}</div>
-            {/if}
-          </div>
-
-          <!-- Genres -->
-          {#if genres.length}
-            <div class="tags-section">
-              <span class="tag-label">Genres</span>
-              <div class="tag-list">
-                {#each genres as g}
-                  <button type="button" class="tag clickable" onclick={() => onfilterGenre?.(g)}>{g}</button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Features -->
-          {#if features.length}
-            <div class="tags-section">
-              <span class="tag-label">Features</span>
-              <div class="tag-list">
-                {#each features as f}
-                  <span class="tag">{f}</span>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Languages -->
-          {#if langs.length}
-            <div class="tags-section">
-              <span class="tag-label">Languages</span>
-              <div class="tag-list">
-                {#each langs as l}
-                  <span class="tag">{l}</span>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Tags -->
-          {#if details?.tags?.length}
-            <div class="tags-section">
-              <span class="tag-label">Tags</span>
-              <div class="tag-list">
-                {#each details.tags as t}
-                  <button type="button" class="tag clickable" onclick={() => onfilterTag?.(t)}>{t}</button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Description -->
-          {#if game.description}
-            <div class="description">
-              <h3>About</h3>
-              <p>{game.description}</p>
-            </div>
-          {/if}
-
-          <!-- Details Grid -->
-          <div class="details-grid">
-            {#if game.developer}
-              <div class="detail-item">
-                <span class="detail-label">Developer</span>
-                <button type="button" class="detail-link" onclick={() => onfilterDeveloper?.(game.developer)}>{game.developer}</button>
-              </div>
-            {/if}
-            {#if game.publisher}
-              <div class="detail-item">
-                <span class="detail-label">Publisher</span>
-                <button type="button" class="detail-link" onclick={() => onfilterPublisher?.(game.publisher)}>{game.publisher}</button>
-              </div>
-            {/if}
-            {#if game.release_date}
-              <div class="detail-item">
-                <span class="detail-label">Release Date</span>
-                <button type="button" class="detail-link" onclick={() => onfilterYear?.(year)}>{game.release_date}</button>
-              </div>
-            {/if}
-          </div>
-
-          <!-- Downloads -->
-          <div class="downloads-section" onclick={loadDetails} onkeydown={(e) => e.key === 'Enter' && loadDetails()}>
-            <h3>Downloads</h3>
-            {#if loading}
-              <p class="status-msg">Loading...</p>
-            {:else if details?.downloads?.length}
-              <div class="os-tabs">
-                {#each details.downloads as dl}
-                  <button type="button"
-                    class="os-tab"
-                    class:active={selectedOs === dl.os}
-                    onclick={() => (selectedOs = dl.os)}>
-                    {@html OS_ICONS[dl.os] || ""}
-                    {dl.os}
-                  </button>
-                {/each}
-              </div>
-              <div class="dl-type-toggle">
-                <button type="button"
-                  class="dl-type-btn"
-                  class:active={dlType === "installer"}
-                  onclick={() => (dlType = "installer")}>Installers</button>
-                <button type="button"
-                  class="dl-type-btn"
-                  class:active={dlType === "bonus"}
-                  onclick={() => (dlType = "bonus")}>Bonus</button>
-              </div>
-              {#if filteredBuilds.length}
-                <div class="build-list">
-                  {#each filteredBuilds as build}
-                    <div class="build-row" class:downloading={dlStatus?.slug === build.slug}>
-                      <div class="build-info">
-                        <span class="build-name">{build.name}</span>
-                        {#if build.size}
-                          <span class="build-size">{(build.size / 1024 / 1024).toFixed(0)} MB</span>
-                        {/if}
-                      </div>
-                      <button type="button"
-                        class="dl-btn"
-                        disabled={dlStatus?.slug === build.slug}
-                        onclick={() => downloadBuild(build)}>
-                        {#if dlStatus?.slug === build.slug}
-                          <span class="dl-spinner"></span>
-                          Downloading...
-                        {:else}
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                          Download
-                        {/if}
-                      </button>
-                    </div>
-                  {/each}
-                </div>
-              {:else}
-                <p class="status-msg">No {dlType === "installer" ? "installer" : "bonus content"} builds for {selectedOs}</p>
-              {/if}
-            {:else if details}
-              <p class="status-msg">No downloads available</p>
-            {:else}
-              <p class="status-msg">Click to load download details</p>
-            {/if}
-          </div>
+        <div class="detail-rating">
+          <span class="stars">{fmtRating(game.rating)}</span>
+          <span class="rating-num">{game.rating ? game.rating.toFixed(1) + '/5' : 'No ratings'}</span>
         </div>
+        {#if genres.length > 0 || tags.length > 0}
+          <div class="tag-group">
+            {#each genres as g}
+              <button type="button" class="tag genre" onclick={() => onfilterGenre?.(g)}>{g}</button>
+            {/each}
+            {#each tags as t}
+              <button type="button" class="tag tag-item" onclick={(e) => { e.stopPropagation(); onfilterTag?.(t); }}>{t}</button>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
+
+    <div class="detail-body">
+      {#if game.magnet_link}
+        <div class="detail-section">
+          <h3>Torrent</h3>
+          {#if addStatus === "success"}
+            <div class="add-status success">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              Added &mdash; switching to Downloads...
+            </div>
+          {:else if addStatus === "error"}
+            <div class="add-status error">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              Failed to add torrent
+            </div>
+            <button class="download-torrent-btn" onclick={startDownload}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Retry
+            </button>
+          {:else if showFileSelector}
+            <div class="torrent-file-select">
+              <div class="file-select-header">
+                <label class="toggle-all">
+                  <input type="checkbox" checked={selectedFiles.size === torrentFiles.length} onchange={toggleAll} />
+                  {selectedFiles.size}/{torrentFiles.length} files selected
+                </label>
+                <span class="total-size">{formatSize(torrentFiles.reduce((a, f) => a + f.size, 0))}</span>
+              </div>
+              <div class="torrent-files-list">
+                {#each torrentFiles as f}
+                  <label class="torrent-file-item" class:selected={selectedFiles.has(f.index)}>
+                    <input type="checkbox" checked={selectedFiles.has(f.index)} onchange={() => toggleFile(f.index)} />
+                    <span class="file-name">{f.name}</span>
+                    <span class="file-size">{formatSize(f.size)}</span>
+                  </label>
+                {/each}
+              </div>
+              <div class="file-select-actions">
+                <button class="download-torrent-btn" onclick={startDownload} disabled={installing || selectedFiles.size === 0}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  {installing ? "Adding..." : `Download selected (${selectedFiles.size})`}
+                </button>
+                <button class="cancel-select-btn" onclick={() => { showFileSelector = false; }}>Cancel</button>
+              </div>
+            </div>
+          {:else if previewing}
+            <div class="add-status">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+              Reading torrent files...
+            </div>
+          {:else}
+            <button class="download-torrent-btn" onclick={download} disabled={installing}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Download via Torrent
+            </button>
+          {/if}
+        </div>
+      {:else}
+        <div class="detail-section">
+          <h3>Torrent</h3>
+          <p class="no-downloads">No torrent available</p>
+        </div>
+      {/if}
+
+      {#if files.length > 0}
+        <div class="detail-section">
+          <h3>Files{totalFiles > 1 ? ` (${totalFiles})` : ''}</h3>
+          <div class="files-list">
+            {#each visibleFiles() as f}
+              <div class="file-item">
+                <span class="name" title={f.name}>{f.name?.length > 65 ? f.name.slice(0, 65) + '...' : f.name || '\u2014'}</span>
+                {#if f.type === "goodie"}
+                  <span class="goodie-tag">(extra)</span>
+                {/if}
+                <span class="file-right">
+                  <span class="size">{fmtSizeStr(f.size)}</span>
+                </span>
+              </div>
+            {/each}
+          </div>
+          {#if hiddenFiles().length > 0}
+            <div id="filesExtra" class="files-extra" class:open={showAllFiles}>
+              {#each hiddenFiles() as f}
+                <div class="file-item">
+                  <span class="name" title={f.name}>{f.name?.length > 65 ? f.name.slice(0, 65) + '...' : f.name || '\u2014'}</span>
+                  {#if f.type === "goodie"}
+                    <span class="goodie-tag">(extra)</span>
+                  {/if}
+                  <span class="file-right">
+                    <span class="size">{fmtSizeStr(f.size)}</span>
+                  </span>
+                </div>
+              {/each}
+            </div>
+            <button class="files-toggle" onclick={() => (showAllFiles = !showAllFiles)}>
+              {showAllFiles ? 'Show less' : `Show all ${totalFiles} files`}
+            </button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if game.gog_url || game.gogdb_url || game.pcgamingwiki_url}
+        <div class="detail-section links-section">
+          <div class="link-group">
+            {#if game.gog_url}
+              <button type="button" class="ext-link" onclick={() => invoke("open_url", { url: game.gog_url })}>GOG</button>
+            {/if}
+            {#if game.gogdb_url}
+              <button type="button" class="ext-link" onclick={() => invoke("open_url", { url: game.gogdb_url })}>GOGDB</button>
+            {/if}
+            {#if game.pcgamingwiki_url}
+              <button type="button" class="ext-link" onclick={() => invoke("open_url", { url: game.pcgamingwiki_url })}>PCGamingWiki</button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
+    </div>
   </div>
-{/if}
+</div>
 
 <style>
-  .modal-overlay {
+  .modal-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 300;
     background: rgba(0,0,0,.85);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 80px 40px;
   }
 
-  .modal {
+  .modal-content {
     position: relative;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    max-width: 620px;
     width: 100%;
-    max-height: 85vh;
+    max-width: 860px;
+    margin: 0 auto;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    animation: modalIn .3s cubic-bezier(.22,1,.36,1);
     overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0,0,0,.6);
   }
 
-  .close-btn {
+  .modal-scroll {
+    max-height: calc(100vh - 280px);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(.95) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .modal-close {
     position: absolute;
     top: 14px;
     right: 14px;
     z-index: 10;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0,0,0,.5);
-    border: none;
+    border: 1px solid var(--border);
     border-radius: 50%;
-    color: #fff;
+    background: rgba(0,0,0,.85);
+    color: var(--text-muted);
     cursor: pointer;
-    transition: background .15s;
+    transition: all .2s;
   }
 
-  .close-btn:hover { background: rgba(0,0,0,.8); }
-
-  .modal-scroll {
-    overflow-y: auto;
-    max-height: 85vh;
+  .modal-close:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+    border-color: var(--border-hover);
   }
 
-  .hero {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 16/9;
-    overflow: hidden;
-    background: #111;
-  }
-
-  .hero img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-
-  .hero-placeholder {
-    width: 100%;
-    height: 100%;
+  .detail-header {
     display: flex;
+    gap: 20px;
+    padding: 24px 32px 16px;
+  }
+
+  .detail-cover {
+    flex-shrink: 0;
+    width: 180px;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .detail-cover img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 10px;
+  }
+
+  .cover-letter {
+    display: none;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #1a1a2e, #2d1b4e);
-  }
-
-  .hero-letter {
-    font-size: 5rem;
+    aspect-ratio: 3/4;
+    font-size: 3rem;
     font-weight: 700;
     color: var(--text-muted);
-    opacity: .5;
+    background: linear-gradient(135deg, #1a1a2e, #2d1b4e);
+    border-radius: 10px;
   }
 
-  .hero-overlay {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 32px 24px 20px;
-    background: linear-gradient(transparent, rgba(0,0,0,.92));
+  .no-image .cover-letter {
+    display: flex;
   }
 
-  .hero-overlay h1 {
-    font-size: 1.4rem;
+  .no-image img {
+    display: none;
+  }
+
+  .detail-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .detail-info h2 {
+    font-size: 1.35rem;
     font-weight: 700;
-    margin-bottom: 4px;
-    color: #fff;
-    line-height: 1.2;
+    margin-bottom: 2px;
+    line-height: 1.3;
   }
 
   .dev-pub {
     font-size: .85rem;
-    color: rgba(255,255,255,.6);
-  }
-
-  .content {
-    padding: 20px 24px 24px;
-  }
-
-  .meta-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
-
-  .meta-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border-radius: 14px;
-    font-size: .72rem;
-    background: rgba(255,255,255,.06);
-    border: 1px solid rgba(255,255,255,.1);
-    color: var(--text-muted);
-  }
-
-  .meta-chip.rating { color: #ffc107; }
-
-  .tags-section { margin-bottom: 14px; }
-
-  .tag-label {
-    display: block;
-    font-size: .68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .5px;
     color: var(--text-muted);
     margin-bottom: 6px;
   }
 
-  .tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
-
-  .tag {
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: .72rem;
-    background: rgba(255,255,255,.05);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    line-height: 1.4;
-  }
-
-  .tag.clickable {
+  .dev-link {
+    color: var(--accent2);
     cursor: pointer;
+    border-bottom: 1px dashed transparent;
     transition: all .15s;
   }
 
-  .tag.clickable:hover {
-    border-color: var(--text-muted);
-    color: var(--text);
-    background: rgba(255,255,255,.08);
+  .dev-link:hover {
+    border-bottom-color: var(--accent2);
   }
 
-  .description {
+  .pub-link {
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+    transition: all .15s;
+  }
+
+  .pub-link:hover {
+    border-bottom-color: var(--text-muted);
+    color: var(--text);
+  }
+
+  .year-link {
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+    transition: all .15s;
+  }
+
+  .year-link:hover {
+    border-bottom-color: var(--text-muted);
+    color: var(--text);
+  }
+
+  .detail-rating {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .stars {
+    color: #ffc107;
+    font-size: .85rem;
+    letter-spacing: 1px;
+  }
+
+  .rating-num {
+    font-size: .82rem;
+    color: var(--text-muted);
+  }
+
+  .tag-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .tag {
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-size: .7rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s;
+    background: rgba(124,92,255,.12);
+    border: 1px solid rgba(124,92,255,.2);
+    color: #b3a0ff;
+  }
+
+  .tag:hover {
+    background: rgba(124,92,255,.25);
+    border-color: var(--accent);
+    color: #c4b5ff;
+  }
+
+  .tag.genre {
+    background: rgba(0,212,170,.1);
+    border-color: rgba(0,212,170,.2);
+    color: #5eebcb;
+  }
+
+  .tag.genre:hover {
+    background: rgba(0,212,170,.2);
+    border-color: var(--accent2);
+  }
+
+  .detail-body {
+    padding: 0 32px 4px;
+  }
+
+  .detail-section {
     margin-bottom: 16px;
   }
 
-  .description h3 {
+  .detail-section h3 {
+    font-size: .7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .download-torrent-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border: 1px solid #f59e0b33;
+    border-radius: 8px;
+    background: rgba(245,158,11,.1);
+    color: #fbbf24;
     font-size: .85rem;
     font-weight: 600;
-    color: var(--text);
-    margin-bottom: 6px;
-  }
-
-  .description p {
-    font-size: .82rem;
-    color: var(--text-muted);
-    line-height: 1.55;
-  }
-
-  .details-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 8px;
-    margin-bottom: 18px;
-  }
-
-  .detail-item {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .detail-label {
-    font-size: .65rem;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    color: var(--text-muted);
-  }
-
-  .detail-link {
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    font-size: .82rem;
-    color: var(--accent, #7c6cf0);
     cursor: pointer;
-    text-align: left;
-    transition: color .15s;
+    transition: all .2s;
   }
 
-  .detail-link:hover {
-    color: var(--accent-hover, #8a6cff);
-    text-decoration: underline;
+  .download-torrent-btn:hover:not(:disabled) {
+    background: rgba(245,158,11,.2);
+    border-color: #f59e0b66;
+    color: #fcd34d;
   }
 
-  .downloads-section {
-    background: rgba(255,255,255,.02);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    cursor: pointer;
-    transition: border-color .2s;
-  }
-
-  .downloads-section:hover {
-    border-color: var(--text-muted);
-  }
-
-  .downloads-section h3 {
-    font-size: .9rem;
-    font-weight: 600;
-    margin-bottom: 12px;
-    color: var(--text);
-  }
-
-  .status-msg {
-    font-size: .82rem;
-    color: var(--text-muted);
-    text-align: center;
-    padding: 8px;
-  }
-
-  .os-tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 10px;
-  }
-
-  .os-tab {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 6px 14px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: .78rem;
-    cursor: pointer;
-    transition: all .15s;
-    text-transform: capitalize;
-  }
-
-  .os-tab:hover {
-    border-color: var(--text-muted);
-    color: var(--text);
-  }
-
-  .os-tab.active {
-    background: rgba(255,255,255,.06);
-    border-color: var(--text);
-    color: var(--text);
-  }
-
-  .dl-type-toggle {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 10px;
-  }
-
-  .dl-type-btn {
-    flex: 1;
-    padding: 5px;
-    border: none;
-    background: rgba(255,255,255,.04);
-    color: var(--text-muted);
-    font-size: .75rem;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    transition: all .15s;
-  }
-
-  .dl-type-btn.active {
-    background: rgba(255,255,255,.1);
-    color: var(--text);
-    font-weight: 600;
-  }
-
-  .build-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .build-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    background: rgba(255,255,255,.03);
-    border-radius: var(--radius-sm);
-    transition: background .15s;
-  }
-
-  .build-row:hover { background: rgba(255,255,255,.06); }
-  .build-row.downloading { background: rgba(0,212,170,.08); }
-
-  .build-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .build-name {
-    font-size: .82rem;
-    color: var(--text);
-    font-weight: 500;
-  }
-
-  .build-size {
-    font-size: .7rem;
-    color: var(--text-muted);
-  }
-
-  .dl-btn {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 5px 14px;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--accent);
-    font-size: .75rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all .15s;
-    white-space: nowrap;
-  }
-
-  .dl-btn:hover:not(:disabled) {
-    background: var(--accent);
-    color: #fff;
-  }
-
-  .dl-btn:disabled {
+  .download-torrent-btn:disabled {
     opacity: .6;
     cursor: default;
   }
 
-  .dl-spinner {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--accent);
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: spin .6s linear infinite;
+  .no-downloads {
+    color: var(--text-muted);
+    font-size: .82rem;
+    font-style: italic;
+  }
+
+  .add-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .85rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .add-status.success {
+    color: var(--accent2, #00d4aa);
+  }
+
+  .add-status.error {
+    color: #ef4444;
+  }
+
+  .files-list {
+    display: grid;
+    gap: 2px;
+  }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 5px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid var(--border);
+    font-size: .73rem;
+    gap: 6px;
+  }
+
+  .file-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .file-item .name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .file-item .size {
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .goodie-tag {
+    color: var(--accent2);
+    font-size: .68rem;
+    flex-shrink: 0;
+  }
+
+  .files-toggle {
+    margin-top: 4px;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: .73rem;
+    cursor: pointer;
+    transition: all .2s;
+  }
+
+  .files-toggle:hover {
+    border-color: var(--text-muted);
+    color: var(--text);
+    background: rgba(255,255,255,.06);
+  }
+
+  .files-extra {
+    display: none;
+  }
+
+  .files-extra.open {
+    display: grid;
+    gap: 2px;
+  }
+
+  .torrent-file-select {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .file-select-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: rgba(255,255,255,.04);
+    border-bottom: 1px solid var(--border);
+    font-size: .78rem;
+  }
+
+  .toggle-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    color: var(--text);
+    user-select: none;
+  }
+
+  .toggle-all input {
+    accent-color: var(--accent);
+  }
+
+  .total-size {
+    color: var(--text-muted);
+  }
+
+  .torrent-files-list {
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  .torrent-file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    font-size: .78rem;
+    cursor: pointer;
+    transition: background .1s;
+    user-select: none;
+  }
+
+  .torrent-file-item:hover {
+    background: rgba(255,255,255,.04);
+  }
+
+  .torrent-file-item.selected {
+    background: rgba(124,92,255,.08);
+  }
+
+  .torrent-file-item input {
+    accent-color: var(--accent);
+  }
+
+  .torrent-file-item .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .torrent-file-item .file-size {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .file-select-actions {
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    background: rgba(255,255,255,.02);
+  }
+
+  .cancel-select-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: .82rem;
+    cursor: pointer;
+    transition: all .2s;
+  }
+
+  .cancel-select-btn:hover {
+    border-color: var(--text-muted);
+    color: var(--text);
+    background: rgba(255,255,255,.05);
+  }
+
+  .spin {
+    animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
+    from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .links-section {
+    padding-top: 0;
+  }
+
+  .link-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .ext-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+    color: var(--text);
+    text-decoration: none;
+    font-size: .75rem;
+    transition: all .2s;
+  }
+
+  .ext-link:hover {
+    border-color: var(--text-muted);
+    background: rgba(255,255,255,.05);
   }
 </style>
