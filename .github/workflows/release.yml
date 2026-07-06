@@ -3,54 +3,49 @@ name: Release
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
   create-release:
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create.outputs.id }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Verify version matches tag
+      - id: tag
         run: |
-          SOURCE_VER="$(grep '"version"' src-tauri/tauri.conf.json | sed 's/.*"\(.*\)".*/\1/')"
-          TAG_VER="${GITHUB_REF_NAME#v}"
-          if [ "$SOURCE_VER" != "$TAG_VER" ]; then
-            echo "ERROR: tauri.conf.json version ($SOURCE_VER) doesn't match tag ($GITHUB_REF_NAME)"
-            exit 1
-          fi
+          VER="$(grep '"version"' src-tauri/tauri.conf.json | sed 's/.*"\(.*\)".*/\1/')"
+          echo "tag=v${VER}-auto" >> "$GITHUB_OUTPUT"
 
-      - name: Delete existing release (clean slate)
+      - name: Delete existing auto-release (clean slate)
         uses: actions/github-script@v9
         with:
           script: |
+            const tag = '${{ steps.tag.outputs.tag }}';
             const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
-            const existing = releases.find(r => r.tag_name === context.ref.replace('refs/tags/', ''));
+            const existing = releases.find(r => r.tag_name === tag);
             if (existing) {
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: existing.id,
               });
-              console.log('Deleted existing release: ' + existing.tag_name);
+              console.log('Deleted existing release: ' + tag);
             }
 
       - id: create
         uses: softprops/action-gh-release@v3.0.1
         with:
-          tag_name: ${{ github.ref_name }}
-          name: 'GOG Archive Desktop ${{ github.ref_name }}'
-          body: ''
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: 'GOG Archive Desktop ${{ steps.tag.outputs.tag }}'
+          body: 'Auto-built from main@${{ github.sha }}'
           draft: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -120,20 +115,9 @@ jobs:
           TAURI_SIGNING_IDENTITY: ""
 
       - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3.0.1
         with:
           files: ${{ matrix.artifact-patterns }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.create-release.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload CI artifacts
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform }}
-          path: |
-            src-tauri/target/release/bundle/**/*
-            src-tauri/target/release/gog-archive
-            src-tauri/target/universal-apple-darwin/release/bundle/**/*
