@@ -357,7 +357,7 @@ impl TorrentEngine {
         // Collect raw stats from all torrents (closure is Fn, use interior mutability)
         use std::cell::RefCell;
         let raw = RefCell::new(
-            Vec::<(String, Option<String>, String, i64, i64, i64, TorrentStatsState, bool, i64)>::new(),
+            Vec::<(String, Option<String>, String, i64, i64, i64, TorrentStatsState, bool, bool, i64)>::new(),
         );
 
         let base = self.base_path.clone();
@@ -389,16 +389,25 @@ impl TorrentEngine {
                 } else {
                     stats.total_bytes as i64
                 };
-                let truly_finished = stats.finished || stats.progress_bytes as i64 >= effective_total;
+                let pbytes = stats.progress_bytes as i64;
+                let nearly_done = if effective_total > 0 && pbytes < effective_total {
+                    let remaining = effective_total - pbytes;
+                    remaining < effective_total / 100 && remaining < 500 * 1024 * 1024
+                } else {
+                    false
+                };
+                let truly_finished = stats.finished || pbytes >= effective_total || nearly_done;
+                let forced_finish = truly_finished && !stats.finished;
                 raw.borrow_mut().push((
                     info_hash,
                     name,
                     save_path,
-                    stats.progress_bytes as i64,
+                    pbytes,
                     stats.uploaded_bytes as i64,
                     effective_total,
                     stats.state,
                     truly_finished,
+                    forced_finish,
                     num_peers,
                 ));
             }
@@ -411,9 +420,11 @@ impl TorrentEngine {
         let (_dlr, _ulr) = inner.rate.update(total_progress, total_uploaded);
 
         let mut results = Vec::new();
-        for (info_hash, name, save_path, progress_bytes, uploaded_bytes, total_bytes, state, finished, num_peers) in raw {
+        for (info_hash, name, save_path, progress_bytes, uploaded_bytes, total_bytes, state, finished, forced_finish, num_peers) in raw {
             let state_str = state_to_string(state, finished);
-            let progress = if total_bytes > 0 {
+            let progress = if forced_finish {
+                1.0
+            } else if total_bytes > 0 {
                 (progress_bytes as f64 / total_bytes as f64).min(1.0)
             } else {
                 0.0
