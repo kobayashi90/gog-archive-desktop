@@ -386,13 +386,16 @@ impl TorrentEngine {
                         }
                     }).unwrap_or(stats.total_bytes as i64);
                 let pbytes = stats.progress_bytes as i64;
-                #[cfg(windows)]
-                let nearly_done = adjusted_total > 0 && pbytes < adjusted_total && {
-                    let remaining = adjusted_total - pbytes;
-                    remaining < adjusted_total / 100 && remaining < 500 * 1024 * 1024
+                let remaining = if adjusted_total > 0 && pbytes < adjusted_total {
+                    adjusted_total - pbytes
+                } else {
+                    0
                 };
+                #[cfg(windows)]
+                let nearly_done = remaining > 0 &&
+                    (remaining < adjusted_total / 100 && remaining < 500 * 1024 * 1024);
                 #[cfg(not(windows))]
-                let nearly_done = false;
+                let nearly_done = remaining > 0 && remaining < 1024 * 1024;
                 let truly_finished = stats.finished || pbytes >= adjusted_total || nearly_done;
                 let forced_finish = truly_finished && !stats.finished;
                 raw.borrow_mut().push((
