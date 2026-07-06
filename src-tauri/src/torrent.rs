@@ -370,8 +370,7 @@ impl TorrentEngine {
                 let num_peers = stats.live.as_ref()
                     .map(|l| l.snapshot.peer_stats.live as i64)
                     .unwrap_or(0);
-                let effective_total = if matches!(stats.state, TorrentStatsState::Initializing) {
-                    handle.with_metadata(|meta| {
+                let adjusted_total = handle.with_metadata(|meta| {
                         let only = handle.only_files();
                         match only {
                             Some(ref indices) => {
@@ -385,18 +384,16 @@ impl TorrentEngine {
                                 .map(|fi| fi.len as i64)
                                 .sum(),
                         }
-                    }).unwrap_or(stats.total_bytes as i64)
-                } else {
-                    stats.total_bytes as i64
-                };
+                    }).unwrap_or(stats.total_bytes as i64);
                 let pbytes = stats.progress_bytes as i64;
-                let nearly_done = if effective_total > 0 && pbytes < effective_total {
-                    let remaining = effective_total - pbytes;
-                    remaining < effective_total / 100 && remaining < 500 * 1024 * 1024
-                } else {
-                    false
+                #[cfg(windows)]
+                let nearly_done = adjusted_total > 0 && pbytes < adjusted_total && {
+                    let remaining = adjusted_total - pbytes;
+                    remaining < adjusted_total / 100 && remaining < 500 * 1024 * 1024
                 };
-                let truly_finished = stats.finished || pbytes >= effective_total || nearly_done;
+                #[cfg(not(windows))]
+                let nearly_done = false;
+                let truly_finished = stats.finished || pbytes >= adjusted_total || nearly_done;
                 let forced_finish = truly_finished && !stats.finished;
                 raw.borrow_mut().push((
                     info_hash,
@@ -404,7 +401,7 @@ impl TorrentEngine {
                     save_path,
                     pbytes,
                     stats.uploaded_bytes as i64,
-                    effective_total,
+                    adjusted_total,
                     stats.state,
                     truly_finished,
                     forced_finish,
