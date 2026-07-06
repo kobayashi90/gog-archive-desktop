@@ -8,10 +8,37 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
+  check-version:
     runs-on: ubuntu-latest
     outputs:
-      release_id: ${{ steps.create.outputs.id }}
+      current_tag: ${{ steps.vars.outputs.tag }}
+      current_name: ${{ steps.vars.outputs.name }}
+      version_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: vars
+        run: |
+          VER="$(grep '"version"' src-tauri/tauri.conf.json | sed 's/.*"\(.*\)".*/\1/')"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          echo "name=GOG Archive Desktop v${VER}" >> "$GITHUB_OUTPUT"
+
+      - id: check
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          if gh release view "$TAG" --json tagName 2>/dev/null | grep -q "$TAG"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release:
+    needs: check-version
+    if: needs.check-version.outputs.version_changed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
       tag: ${{ steps.vars.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
@@ -20,11 +47,8 @@ jobs:
 
       - id: vars
         run: |
-          VER="$(grep '"version"' src-tauri/tauri.conf.json | sed 's/.*"\(.*\)".*/\1/')"
-          DATE="$(date +%Y%m%d)"
-          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
-          echo "name=GOG Archive Desktop v${VER}" >> "$GITHUB_OUTPUT"
-          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ needs.check-version.outputs.current_tag }}" >> "$GITHUB_OUTPUT"
+          echo "name=${{ needs.check-version.outputs.current_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         run: |
@@ -35,33 +59,14 @@ jobs:
             git log --oneline --no-decorate -20 > /tmp/CHANGELOG.md
           fi
 
-      - name: Delete previous auto-release for this version (clean slate)
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const tag = '${{ steps.vars.outputs.tag }}';
-            const { data: releases } = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-            });
-            const existing = releases.find(r => r.tag_name === tag);
-            if (existing) {
-              await github.rest.repos.deleteRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: existing.id,
-              });
-              console.log('Deleted existing release: ' + tag);
-            }
-
-      - name: Create or force-update lightweight tag
+      - name: Create lightweight tag
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git tag -f "${{ steps.vars.outputs.tag }}" "${{ github.sha }}"
-          git push origin "${{ steps.vars.outputs.tag }}" --force
+          git tag "${{ steps.vars.outputs.tag }}" "${{ github.sha }}"
+          git push origin "${{ steps.vars.outputs.tag }}"
 
-      - id: create
+      - name: Create draft release
         uses: softprops/action-gh-release@v3.0.1
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
@@ -71,7 +76,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   build:
-    needs: create-release
+    needs: [check-version, create-release]
     if: always()
     strategy:
       fail-fast: false
@@ -136,9 +141,10 @@ jobs:
           TAURI_SIGNING_IDENTITY: ""
 
       - name: Upload to release
+        if: needs.check-version.outputs.version_changed == 'true'
         uses: softprops/action-gh-release@v3.0.1
         with:
           files: ${{ matrix.artifact-patterns }}
-          tag_name: ${{ needs.create-release.outputs.tag }}
+          tag_name: ${{ needs.check-version.outputs.current_tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
