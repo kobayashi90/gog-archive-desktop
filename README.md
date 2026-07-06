@@ -1,6 +1,6 @@
 # GOG Archive Desktop
 
-A cross-platform desktop application for browsing, searching, and downloading games from the GOG catalog via BitTorrent. Built with [Tauri 2](https://v2.tauri.app/) and [Svelte 4](https://svelte.dev/).
+A cross-platform desktop application for browsing, searching, and downloading games from the GOG catalog via BitTorrent. Built with [Tauri 2](https://v2.tauri.app/) and [Svelte 5](https://svelte.dev/).
 
 > In cooperation with [Privateers.Wiki](https://privateers.wiki)
 
@@ -138,7 +138,7 @@ Settings are stored in `~/.config/gog-archive/config.json` and can also be edite
 | Layer | Technology |
 |-------|-----------|
 | Desktop Shell | [Tauri 2](https://v2.tauri.app/) |
-| Frontend | [Svelte 4](https://svelte.dev/) |
+| Frontend | [Svelte 5](https://svelte.dev/) |
 | Backend | [Rust](https://www.rust-lang.org/) |
 | BitTorrent | [librqbit](https://github.com/ikatson/rqbit) (rqbit) |
 | API Client | [reqwest](https://docs.rs/reqwest/) |

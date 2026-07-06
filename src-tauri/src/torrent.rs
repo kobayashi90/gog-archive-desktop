@@ -71,7 +71,41 @@ fn free_disk_space(path: &Path) -> Result<u64, String> {
     Ok(stat.f_frsize as u64 * stat.f_bavail as u64)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn free_disk_space(path: &Path) -> Result<u64, String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut available = 0u64;
+    let mut total = 0u64;
+    let mut free = 0u64;
+
+    let rc = unsafe {
+        GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, &mut total, &mut free)
+    };
+    if rc == 0 {
+        Err("GetDiskFreeSpaceExW failed".into())
+    } else {
+        Ok(available)
+    }
+}
+
+#[cfg(windows)]
+extern "system" {
+    fn GetDiskFreeSpaceExW(
+        dir: *const u16,
+        avail: *mut u64,
+        total: *mut u64,
+        free: *mut u64,
+    ) -> i32;
+}
+
+#[cfg(not(any(unix, windows)))]
 fn free_disk_space(_path: &Path) -> Result<u64, String> {
     Ok(i64::MAX as u64)
 }
