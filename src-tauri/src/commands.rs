@@ -186,7 +186,6 @@ pub async fn torrent_library(state: State<'_, AppState>) -> Result<Vec<LibraryEn
             entry.image = game.image;
             entry.developer = game.developer;
             entry.genre = game.genres;
-            entry.file_count = game.file_count;
             entry.total_size = game.total_size;
             continue;
         }
@@ -198,7 +197,6 @@ pub async fn torrent_library(state: State<'_, AppState>) -> Result<Vec<LibraryEn
                 entry.image = game.image;
                 entry.developer = game.developer;
                 entry.genre = game.genres;
-                entry.file_count = game.file_count;
                 entry.total_size = game.total_size;
             }
         }

@@ -522,7 +522,7 @@ impl TorrentEngine {
                 size,
                 developer: None,
                 genre: None,
-                file_count: 0,
+                file_count: dir_file_count(&path),
                 total_size: None,
             });
         }
@@ -546,7 +546,7 @@ impl TorrentEngine {
                 size,
                 developer: None,
                 genre: None,
-                file_count: 0,
+                file_count: dir_file_count(&path),
                 total_size: None,
             });
         }
@@ -573,7 +573,7 @@ impl TorrentEngine {
                 size,
                 developer: None,
                 genre: None,
-                file_count: 0,
+                file_count: dir_file_count(&path),
                 total_size: None,
             });
         }
@@ -757,6 +757,21 @@ fn dir_size(path: &std::path::Path) -> i64 {
                 total += meta.len() as i64;
             }
             }
+    }
+    total
+}
+
+fn dir_file_count(path: &std::path::Path) -> i64 {
+    let mut total = 0i64;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                total += dir_file_count(&p);
+            } else if let Ok(_) = std::fs::metadata(&p) {
+                total += 1;
+            }
+        }
     }
     total
 }
