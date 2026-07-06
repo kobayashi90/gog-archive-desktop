@@ -1,4 +1,5 @@
 use librqbit::api::TorrentIdOrHash;
+use librqbit::storage::StorageFactoryExt;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, TorrentStatsState};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -240,7 +241,7 @@ impl TorrentEngine {
         std::fs::create_dir_all(&slug_path).map_err(|e| e.to_string())?;
         check_path_under_base(&slug_path, &self.base_path)?;
 
-        let only_files = selected_files.filter(|v| !v.is_empty());
+        let only_files = selected_files.clone().filter(|v| !v.is_empty());
 
         // Safety net: check disk isn't critically full (exact size unknown here)
         let free = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
@@ -251,13 +252,26 @@ impl TorrentEngine {
             ));
         }
 
+        let mut opts = AddTorrentOptions {
+            output_folder: Some(slug_path.to_string_lossy().to_string()),
+            only_files,
+            ..Default::default()
+        };
+
+        // Use custom storage factory to skip creating unselected files on disk
+        if opts.only_files.is_some() {
+            opts.storage_factory = Some(
+                crate::selective_storage::SelectiveStorageFactory::new(
+                    slug_path.clone(),
+                    selected_files,
+                )
+                .boxed(),
+            );
+        }
+
         let response = self.session.add_torrent(
                 AddTorrent::from_url(magnet.to_string()),
-                Some(AddTorrentOptions {
-                    output_folder: Some(slug_path.to_string_lossy().to_string()),
-                    only_files,
-                    ..Default::default()
-                }),
+                Some(opts),
             )
             .await
             .map_err(|e| format!("Failed to add torrent: {e}"))?;
@@ -356,13 +370,28 @@ impl TorrentEngine {
                 let num_peers = stats.live.as_ref()
                     .map(|l| l.snapshot.peer_stats.live as i64)
                     .unwrap_or(0);
+                let only = handle.only_files();
+                let adjusted_total = handle.with_metadata(|meta| {
+                    match only {
+                        Some(ref indices) => {
+                            indices.iter()
+                                .filter(|i| !meta.file_infos[**i].attrs.padding)
+                                .map(|i| meta.file_infos[*i].len as i64)
+                                .sum()
+                        }
+                        None => meta.file_infos.iter()
+                            .filter(|fi| !fi.attrs.padding)
+                            .map(|fi| fi.len as i64)
+                            .sum(),
+                    }
+                }).unwrap_or(stats.total_bytes as i64);
                 raw.borrow_mut().push((
                     info_hash,
                     name,
                     save_path,
                     stats.progress_bytes as i64,
                     stats.uploaded_bytes as i64,
-                    stats.total_bytes as i64,
+                    adjusted_total,
                     stats.state,
                     stats.finished,
                     num_peers,

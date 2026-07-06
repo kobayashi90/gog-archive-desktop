@@ -1,5 +1,6 @@
 mod api;
 mod commands;
+mod selective_storage;
 mod settings;
 mod torrent;
 
