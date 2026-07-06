@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::storage::StorageFactoryExt;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, TorrentStatsState};
@@ -161,6 +162,7 @@ pub struct TorrentEngine {
     pub base_path: PathBuf,
     persist_path: PathBuf,
     inner: Mutex<EngineInner>,
+    metadata_cache: std::sync::Mutex<HashMap<String, Bytes>>,
 }
 
 fn state_to_string(state: TorrentStatsState, finished: bool) -> &'static str {
@@ -201,6 +203,7 @@ impl TorrentEngine {
                 seed_times: HashMap::new(),
                 torrent_rates: HashMap::new(),
             }),
+            metadata_cache: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -219,6 +222,11 @@ impl TorrentEngine {
             AddTorrentResponse::ListOnly(list) => list,
             _ => return Err("Unexpected response type from torrent add".into()),
         };
+
+        {
+            let mut cache = self.metadata_cache.lock().unwrap();
+            cache.insert(magnet.to_string(), list.torrent_bytes.clone());
+        }
 
         let files: Vec<TorrentFileInfo> = list.info
             .iter_file_details()
@@ -269,10 +277,14 @@ impl TorrentEngine {
             );
         }
 
-        let response = self.session.add_torrent(
-                AddTorrent::from_url(magnet.to_string()),
-                Some(opts),
-            )
+        // Use cached torrent bytes if available (from preview_magnet) to skip metadata download
+        let torrent = {
+            let mut cache = self.metadata_cache.lock().unwrap();
+            cache.remove(magnet).map(AddTorrent::from_bytes)
+                .unwrap_or_else(|| AddTorrent::from_url(magnet.to_string()))
+        };
+
+        let response = self.session.add_torrent(torrent, Some(opts))
             .await
             .map_err(|e| format!("Failed to add torrent: {e}"))?;
 
