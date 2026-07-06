@@ -370,30 +370,35 @@ impl TorrentEngine {
                 let num_peers = stats.live.as_ref()
                     .map(|l| l.snapshot.peer_stats.live as i64)
                     .unwrap_or(0);
-                let only = handle.only_files();
-                let adjusted_total = handle.with_metadata(|meta| {
-                    match only {
-                        Some(ref indices) => {
-                            indices.iter()
-                                .filter(|i| !meta.file_infos[**i].attrs.padding)
-                                .map(|i| meta.file_infos[*i].len as i64)
-                                .sum()
+                let effective_total = if matches!(stats.state, TorrentStatsState::Initializing) {
+                    handle.with_metadata(|meta| {
+                        let only = handle.only_files();
+                        match only {
+                            Some(ref indices) => {
+                                indices.iter()
+                                    .filter(|i| !meta.file_infos[**i].attrs.padding)
+                                    .map(|i| meta.file_infos[*i].len as i64)
+                                    .sum()
+                            }
+                            None => meta.file_infos.iter()
+                                .filter(|fi| !fi.attrs.padding)
+                                .map(|fi| fi.len as i64)
+                                .sum(),
                         }
-                        None => meta.file_infos.iter()
-                            .filter(|fi| !fi.attrs.padding)
-                            .map(|fi| fi.len as i64)
-                            .sum(),
-                    }
-                }).unwrap_or(stats.total_bytes as i64);
+                    }).unwrap_or(stats.total_bytes as i64)
+                } else {
+                    stats.total_bytes as i64
+                };
+                let truly_finished = stats.finished || stats.progress_bytes as i64 >= effective_total;
                 raw.borrow_mut().push((
                     info_hash,
                     name,
                     save_path,
                     stats.progress_bytes as i64,
                     stats.uploaded_bytes as i64,
-                    adjusted_total,
+                    effective_total,
                     stats.state,
-                    stats.finished,
+                    truly_finished,
                     num_peers,
                 ));
             }

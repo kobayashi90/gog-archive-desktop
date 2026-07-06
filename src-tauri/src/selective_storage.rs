@@ -11,6 +11,18 @@ use librqbit::{ManagedTorrentShared, TorrentMetadata};
 use std::os::unix::fs::FileExt;
 #[cfg(windows)]
 use std::os::windows::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+
+fn open_output(path: &Path) -> anyhow::Result<File> {
+    let mut opts = OpenOptions::new();
+    opts.create(true).truncate(false).read(true).write(true);
+    #[cfg(windows)]
+    {
+        opts.share_mode(0x7); // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+    }
+    opts.open(path).with_context(|| format!("error opening {path:?}"))
+}
 
 struct StorageConfig {
     only_set: HashSet<usize>,
@@ -79,13 +91,7 @@ impl TorrentStorage for SelectiveStorage {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let f = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(&path)
-                .with_context(|| format!("error opening {path:?}"))?;
+            let f = open_output(&path)?;
             self.files.get_mut().unwrap()[i] = Some(f);
         }
         Ok(())
