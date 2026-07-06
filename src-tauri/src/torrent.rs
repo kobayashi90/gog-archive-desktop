@@ -2,6 +2,7 @@ use bytes::Bytes;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::storage::StorageFactoryExt;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, TorrentStatsState};
+use std::net::SocketAddr;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::collections::VecDeque;
@@ -162,7 +163,7 @@ pub struct TorrentEngine {
     pub base_path: PathBuf,
     persist_path: PathBuf,
     inner: Mutex<EngineInner>,
-    metadata_cache: std::sync::Mutex<HashMap<String, Bytes>>,
+    metadata_cache: std::sync::Mutex<HashMap<String, (Bytes, Vec<SocketAddr>)>>,
 }
 
 fn state_to_string(state: TorrentStatsState, finished: bool) -> &'static str {
@@ -225,7 +226,7 @@ impl TorrentEngine {
 
         {
             let mut cache = self.metadata_cache.lock().unwrap();
-            cache.insert(magnet.to_string(), list.torrent_bytes.clone());
+            cache.insert(magnet.to_string(), (list.torrent_bytes.clone(), list.seen_peers.clone()));
         }
 
         let files: Vec<TorrentFileInfo> = list.info
@@ -277,12 +278,16 @@ impl TorrentEngine {
             );
         }
 
-        // Use cached torrent bytes if available (from preview_magnet) to skip metadata download
-        let torrent = {
+        // Use cached torrent bytes + seen peers (from preview_magnet) to skip metadata + peer discovery
+        let (torrent, cached_peers) = {
             let mut cache = self.metadata_cache.lock().unwrap();
-            cache.remove(magnet).map(AddTorrent::from_bytes)
-                .unwrap_or_else(|| AddTorrent::from_url(magnet.to_string()))
+            cache.remove(magnet).map(|(bytes, peers)| {
+                (AddTorrent::from_bytes(bytes), Some(peers))
+            }).unwrap_or_else(|| (AddTorrent::from_url(magnet.to_string()), None))
         };
+        if let Some(peers) = cached_peers {
+            opts.initial_peers = Some(peers);
+        }
 
         let response = self.session.add_torrent(torrent, Some(opts))
             .await

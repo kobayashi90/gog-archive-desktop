@@ -29,11 +29,17 @@
   });
 
   $effect(() => {
-    if (isMounted && advFilters) {
-      offset = 0;
-      search();
+    if (isMounted) {
+      const key = JSON.stringify(advFilters);
+      if (key !== _filterKey) {
+        _filterKey = key;
+        offset = 0;
+        search();
+      }
     }
   });
+
+  let _filterKey = "";
 
   async function search() {
     loading = true;

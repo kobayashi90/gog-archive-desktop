@@ -23,6 +23,13 @@
 
   let skipFileSelector = $state(false);
 
+  let selectedTotal = $derived(
+    freeBytes > 0 && torrentFiles.length > 0
+      ? torrentFiles.filter(f => selectedFiles.has(f.index)).reduce((a, f) => a + f.size, 0)
+      : 0
+  );
+  let notEnoughSpace = $derived(selectedTotal > freeBytes);
+
   onMount(() => {
     parseFiles();
     parseGenres();
@@ -306,7 +313,6 @@
                 {/each}
               </div>
               {#if freeBytes > 0}
-                {@const selectedTotal = torrentFiles.filter(f => selectedFiles.has(f.index)).reduce((a, f) => a + f.size, 0)}
                 {#if selectedTotal > freeBytes}
                   <div class="disk-warning">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -315,7 +321,7 @@
                 {/if}
               {/if}
               <div class="file-select-actions">
-                <button class="download-torrent-btn" onclick={startDownload} disabled={installing || selectedFiles.size === 0}>
+                <button class="download-torrent-btn" onclick={startDownload} disabled={installing || selectedFiles.size === 0 || notEnoughSpace}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
                     <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
