@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/open/master/tauri-v2.schema.json",
   "productName": "GOG Archive Desktop",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "identifier": "io.github.gog-archive",
   "build": {
     "frontendDist": "../dist",
