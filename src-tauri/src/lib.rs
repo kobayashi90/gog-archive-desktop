@@ -12,7 +12,7 @@ use torrent::TorrentEngine;
 pub struct AppState {
     pub api: ApiClient,
     pub settings: Arc<Mutex<Settings>>,
-    pub engine: Arc<tokio::sync::Mutex<TorrentEngine>>,
+    pub engine: Arc<TorrentEngine>,
 }
 
 #[cfg(target_os = "linux")]
@@ -50,7 +50,7 @@ pub fn run() {
         std::mem::forget(rt);
         engine
     };
-    let engine = Arc::new(tokio::sync::Mutex::new(engine));
+    let engine = Arc::new(engine);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

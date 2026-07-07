@@ -160,10 +160,20 @@ struct EngineInner {
 
 pub struct TorrentEngine {
     session: Arc<Session>,
-    pub base_path: PathBuf,
+    base_path: std::sync::Mutex<PathBuf>,
     persist_path: PathBuf,
     inner: Mutex<EngineInner>,
     metadata_cache: std::sync::Mutex<HashMap<String, (Bytes, Vec<SocketAddr>)>>,
+}
+
+impl TorrentEngine {
+    pub fn get_base_path(&self) -> PathBuf {
+        self.base_path.lock().unwrap().clone()
+    }
+
+    pub fn set_base_path(&self, path: PathBuf) {
+        *self.base_path.lock().unwrap() = path;
+    }
 }
 
 fn state_to_string(state: TorrentStatsState, finished: bool) -> &'static str {
@@ -194,7 +204,7 @@ impl TorrentEngine {
 
         Ok(Self {
             session,
-            base_path: path,
+            base_path: std::sync::Mutex::new(path),
             persist_path,
             inner: Mutex::new(EngineInner {
                 slug_map: HashMap::new(),
@@ -239,21 +249,22 @@ impl TorrentEngine {
             })
             .collect();
 
-        let free_bytes = free_disk_space(&self.base_path).unwrap_or(i64::MAX as u64) as i64;
+        let free_bytes = free_disk_space(&self.get_base_path()).unwrap_or(i64::MAX as u64) as i64;
 
         Ok(TorrentPreview { files, free_bytes })
     }
 
     pub async fn add_magnet(&self, magnet: &str, slug: &str, selected_files: Option<Vec<usize>>) -> Result<(), String> {
         sanitize_slug(slug)?;
-        let slug_path = self.base_path.join(slug);
+        let base_path = self.get_base_path();
+        let slug_path = base_path.join(slug);
         std::fs::create_dir_all(&slug_path).map_err(|e| e.to_string())?;
-        check_path_under_base(&slug_path, &self.base_path)?;
+        check_path_under_base(&slug_path, &base_path)?;
 
         let only_files = selected_files.clone().filter(|v| !v.is_empty());
 
         // Safety net: check disk isn't critically full (exact size unknown here)
-        let free = free_disk_space(&self.base_path).unwrap_or(u64::MAX) as i64;
+        let free = free_disk_space(&self.get_base_path()).unwrap_or(u64::MAX) as i64;
         if free < 512 * 1024 * 1024 {
             return Err(format!(
                 "Very low disk space: only {:.1} GB available. Free up space and try again.",
@@ -377,7 +388,7 @@ impl TorrentEngine {
             Vec::<(String, Option<String>, String, i64, i64, i64, TorrentStatsState, bool, bool, i64)>::new(),
         );
 
-        let base = self.base_path.clone();
+        let base = self.get_base_path();
         self.session.with_torrents(|iter| {
             for (_, handle) in iter {
                 let stats = handle.stats();
@@ -489,7 +500,7 @@ impl TorrentEngine {
                 0
             };
 
-        let free = free_disk_space(&self.base_path).unwrap_or(i64::MAX as u64) as i64;
+        let free = free_disk_space(&self.get_base_path()).unwrap_or(i64::MAX as u64) as i64;
 
             results.push(TorrentStatus {
                 info_hash,
@@ -522,13 +533,14 @@ impl TorrentEngine {
 
         let mut seen = HashSet::new();
         let mut results = Vec::new();
+        let base_path = self.get_base_path();
 
         // Active torrents (slug_map)
         for slug in inner.slug_map.keys() {
             if sanitize_slug(slug).is_err() {
                 continue;
             }
-            let path = self.base_path.join(slug);
+            let path = base_path.join(slug);
             let size = if path.is_dir() { dir_size(&path) } else { 0 };
             let title = slug_to_title(slug);
             seen.insert(slug.clone());
@@ -552,7 +564,7 @@ impl TorrentEngine {
             if seen.contains(slug) {
                 continue;
             }
-            let path = self.base_path.join(slug);
+            let path = base_path.join(slug);
             let size = if path.is_dir() { dir_size(&path) } else { 0 };
             let title = slug_to_title(slug);
             seen.insert(slug.clone());
@@ -576,7 +588,7 @@ impl TorrentEngine {
             if seen.contains(slug) {
                 continue;
             }
-            let path = self.base_path.join(slug);
+            let path = base_path.join(slug);
             if !path.is_dir() {
                 continue;
             }
@@ -602,7 +614,7 @@ impl TorrentEngine {
     pub async fn get_save_path(&self, slug: &str) -> Option<PathBuf> {
         sanitize_slug(slug).ok()?;
         let inner = self.inner.lock().await;
-        let base = self.base_path.clone();
+        let base = self.get_base_path();
         drop(inner);
 
         let direct = base.join(slug);
@@ -639,14 +651,15 @@ impl TorrentEngine {
         if sanitize_slug(slug).is_err() {
             return false;
         }
-        let path = self.base_path.join(slug);
+        let path = self.get_base_path().join(slug);
         path.is_dir()
     }
 
     pub fn delete_download_dir(&self, slug: &str) -> Result<(), String> {
         sanitize_slug(slug)?;
-        let path = self.base_path.join(slug);
-        check_path_under_base(&path, &self.base_path)?;
+        let base_path = self.get_base_path();
+        let path = base_path.join(slug);
+        check_path_under_base(&path, &base_path)?;
         if path.is_dir() {
             std::fs::remove_dir_all(&path).map_err(|e| e.to_string())
         } else {
@@ -682,7 +695,7 @@ impl TorrentEngine {
         self.save_persisted(&inner);
         drop(inner);
 
-        let base = self.base_path.clone();
+        let base = self.get_base_path();
         let slug_owned = slug.to_string();
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let slug_path = base.join(&slug_owned);

@@ -80,13 +80,12 @@ pub async fn save_settings(
         *s = settings;
     }
 
-    let mut engine = state.engine.lock().await;
-    engine.update_limits(down_limit, up_limit);
+    state.engine.update_limits(down_limit, up_limit);
 
     if !new_dir.is_empty() && new_dir != old_dir {
-        if engine.base_path.to_string_lossy() != new_dir.as_str() {
+        if state.engine.get_base_path().to_string_lossy() != new_dir.as_str() {
             std::fs::create_dir_all(&new_dir).map_err(|e| e.to_string())?;
-            engine.base_path = std::path::PathBuf::from(&new_dir);
+            state.engine.set_base_path(new_dir.as_str().into());
         }
     }
 
@@ -96,8 +95,7 @@ pub async fn save_settings(
 // ── Torrent Operations ──
 
 pub async fn collect_torrent_status(state: &AppState) -> Result<Vec<TorrentStatus>, String> {
-    let engine = state.engine.lock().await;
-    let mut results = engine.status_all().await;
+    let mut results = state.engine.status_all().await;
 
     let mut finished: Vec<String> = Vec::new();
     for status in &results {
@@ -107,7 +105,7 @@ pub async fn collect_torrent_status(state: &AppState) -> Result<Vec<TorrentStatu
     }
 
     for slug in &finished {
-        let _ = engine.remove(slug).await;
+        let _ = state.engine.remove(slug).await;
     }
     results.retain(|s| !finished.contains(&s.slug));
 
@@ -141,8 +139,7 @@ pub async fn torrent_preview(
     state: State<'_, AppState>,
     magnet: String,
 ) -> Result<TorrentPreview, String> {
-    let engine = state.engine.lock().await;
-    engine.preview_magnet(&magnet).await
+    state.engine.preview_magnet(&magnet).await
 }
 
 #[tauri::command]
@@ -152,32 +149,27 @@ pub async fn torrent_add(
     slug: String,
     selected_files: Option<Vec<usize>>,
 ) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    engine.add_magnet(&magnet, &slug, selected_files).await
+    state.engine.add_magnet(&magnet, &slug, selected_files).await
 }
 
 #[tauri::command]
 pub async fn torrent_remove(state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    engine.remove(&slug).await
+    state.engine.remove(&slug).await
 }
 
 #[tauri::command]
 pub async fn torrent_pause(state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    engine.pause(&slug).await
+    state.engine.pause(&slug).await
 }
 
 #[tauri::command]
 pub async fn torrent_resume(state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    engine.resume(&slug).await
+    state.engine.resume(&slug).await
 }
 
 #[tauri::command]
 pub async fn torrent_library(state: State<'_, AppState>) -> Result<Vec<LibraryEntry>, String> {
-    let engine = state.engine.lock().await;
-    let mut results = engine.library().await;
+    let mut results = state.engine.library().await;
 
     for entry in &mut results {
         // First try direct slug match
@@ -207,26 +199,22 @@ pub async fn torrent_library(state: State<'_, AppState>) -> Result<Vec<LibraryEn
 
 #[tauri::command]
 pub async fn torrent_library_delete(state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    engine.library_delete(&slug).await
+    state.engine.library_delete(&slug).await
 }
 
 #[tauri::command]
 pub async fn check_download_dir(state: State<'_, AppState>, slug: String) -> Result<bool, String> {
-    let engine = state.engine.lock().await;
-    Ok(engine.download_dir_exists(&slug))
+    Ok(state.engine.download_dir_exists(&slug))
 }
 
 #[tauri::command]
 pub async fn delete_download_dir(state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    engine.delete_download_dir(&slug)
+    state.engine.delete_download_dir(&slug)
 }
 
 #[tauri::command]
 pub async fn open_folder(state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let engine = state.engine.lock().await;
-    let dir = engine.get_save_path(&slug).await
+    let dir = state.engine.get_save_path(&slug).await
         .ok_or_else(|| format!("Folder not found: {slug}"))?;
 
     #[cfg(target_os = "linux")]
