@@ -219,14 +219,17 @@ impl TorrentEngine {
     }
 
     pub async fn preview_magnet(&self, magnet: &str) -> Result<TorrentPreview, String> {
-        let response = self.session.add_torrent(
+        use tokio::time::{timeout, Duration};
+
+        let response = timeout(Duration::from_secs(30), self.session.add_torrent(
                 AddTorrent::from_url(magnet.to_string()),
                 Some(AddTorrentOptions {
                     list_only: true,
                     ..Default::default()
                 }),
-            )
+            ))
             .await
+            .map_err(|_| "Timed out resolving magnet — no peers found. Try again later or check if the torrent has seeders.".to_string())?
             .map_err(|e| format!("Failed to preview torrent: {e}"))?;
 
         let list = match response {
@@ -300,8 +303,10 @@ impl TorrentEngine {
             opts.initial_peers = Some(peers);
         }
 
-        let response = self.session.add_torrent(torrent, Some(opts))
+        use tokio::time::{timeout, Duration};
+        let response = timeout(Duration::from_secs(30), self.session.add_torrent(torrent, Some(opts)))
             .await
+            .map_err(|_| "Timed out resolving magnet — no peers found. Try again later.".to_string())?
             .map_err(|e| format!("Failed to add torrent: {e}"))?;
 
         let handle = response
