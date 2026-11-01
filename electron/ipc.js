@@ -153,7 +153,12 @@ export function registerIpc ({ settings, settingsPath, engine, api }) {
     try {
       return { ok: true, v: await run(String(cmd), args ?? {}) }
     } catch (e) {
-      return { ok: false, e: e instanceof Error ? e.message : String(e) }
+      const msg = e instanceof Error ? e.message : String(e)
+      // Renderer catch sites are silent, so a fresh install that cannot reach
+      // the API would fail invisibly. Main stderr is captured by launcher logs
+      // (and appimagehub's `tee`), so failures need to surface here.
+      console.error(`[ipc] ${String(cmd)} failed: ${msg}`)
+      return { ok: false, e: msg }
     }
   })
 }

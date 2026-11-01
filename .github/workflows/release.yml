@@ -132,13 +132,24 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      # Always upload: a retry after a partial run must fill an existing
-      # release, and softprops must not undraft what create-release made.
+      # Only a draft release collects artifacts — a fresh one from
+      # create-release, or a partial one left by a failed run. A published
+      # release must never be re-drafted by a later push to main, so gate on
+      # the actual release state instead of version_changed (which is false
+      # for exactly the retry case this needs to serve).
       - name: Upload to release
-        uses: softprops/action-gh-release@v3.0.1
-        with:
-          files: ${{ matrix.artifact-patterns }}
-          tag_name: ${{ needs.check-version.outputs.current_tag }}
-          draft: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.check-version.outputs.current_tag }}"
+          if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" != "true" ]; then
+            echo "Release $TAG is already published; not touching it."
+            exit 0
+          fi
+          shopt -s nullglob
+          FILES=(${{ matrix.artifact-patterns }})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No artifacts matched the pattern for this platform."
+            exit 1
+          fi
+          gh release upload "$TAG" "${FILES[@]}" --clobber

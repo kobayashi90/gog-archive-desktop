@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { invoke } from "./ipc.js";
   import GameCard from "./GameCard.svelte";
 
@@ -18,6 +18,10 @@
 
   onMount(() => {
     isMounted = true;
+  });
+
+  onDestroy(() => {
+    if (_retryTimer) clearTimeout(_retryTimer);
   });
 
   $effect(() => {
@@ -41,7 +45,15 @@
 
   let _filterKey = "";
 
-  async function search() {
+  let _retries = 0;
+  let _retryTimer = null;
+
+  async function search(isRetry = false) {
+    if (!isRetry) _retries = 0;
+    if (_retryTimer) {
+      clearTimeout(_retryTimer);
+      _retryTimer = null;
+    }
     loading = true;
     error = false;
     try {
@@ -60,7 +72,20 @@
       games = result.games;
       total = result.total;
       ongameCount?.(total);
+      console.log("[browse] games loaded:", games.length, "of", total);
     } catch (e) {
+      console.error("[browse] search_games failed:", e);
+      // A transient network blip (observed once on the appimagehub test
+      // runner) must not turn into a visible error before anyone can react:
+      // retry twice, 2 s apart, keeping the spinner up across the gaps.
+      if (_retries < 2) {
+        _retries += 1;
+        _retryTimer = setTimeout(() => {
+          _retryTimer = null;
+          search(true);
+        }, 2000);
+        return;
+      }
       error = true;
     }
     loading = false;
