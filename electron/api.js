@@ -6,6 +6,9 @@
 // The old backend fetched game metadata on every 200 ms status tick — now each
 // slug costs at most one API call per hour.
 
+import https from 'node:https'
+import dns from 'node:dns'
+
 const BASE = 'https://gog.squid.wtf/api'
 const UA = 'gog-archive/1.0'
 const TIMEOUT_MS = 30_000
@@ -118,10 +121,115 @@ export function buildSearchParams ({ limit = 48, offset = 0, query = '', genres,
   return params
 }
 
+// --- DNS resilience --------------------------------------------------------
+// The catalog's nameservers intermittently time out from cloud/CI resolvers:
+// getaddrinfo then fails with EAI_AGAIN after up to 60 s (observed on GitHub
+// Actions runners, where it broke the appimagehub catalog test twice). Bypass
+// the system resolver with DNS-over-HTTPS, which needs no system DNS at all
+// (direct HTTPS to 1.1.1.1 / 8.8.8.8 by IP), racing it against the normal
+// lookup so healthy machines never wait for it.
+const DOH_SERVERS = ['1.1.1.1', '8.8.8.8']
+const DOH_HEAD_START_MS = 1500
+const DOH_TIMEOUT_MS = 6000
+let dohCache = { ip: null, until: 0 }
+
+function dohResolve (hostname) {
+  if (dohCache.ip && Date.now() < dohCache.until) return Promise.resolve(dohCache.ip)
+  const attempt = (i) => new Promise((resolve, reject) => {
+    if (i >= DOH_SERVERS.length) return reject(new Error('DoH resolution failed'))
+    const req = https.get({
+      host: DOH_SERVERS[i],
+      path: '/dns-query?name=' + encodeURIComponent(hostname) + '&type=A',
+      headers: { accept: 'application/dns-json' },
+      timeout: DOH_TIMEOUT_MS
+    }, (res) => {
+      let body = ''
+      res.on('data', (d) => { body += d })
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(body)
+          const a = (j.Answer || []).find((x) => x.type === 1)
+          if (a && a.data) {
+            dohCache = { ip: a.data, until: Date.now() + Math.min(a.TTL || 300, 600) * 1000 }
+            resolve(a.data)
+          } else { attempt(i + 1).then(resolve, reject) }
+        } catch { attempt(i + 1).then(resolve, reject) }
+      })
+    })
+    req.on('error', () => { attempt(i + 1).then(resolve, reject) })
+    req.on('timeout', () => { req.destroy(); attempt(i + 1).then(resolve, reject) })
+  })
+  return attempt(0)
+}
+
+function resilientLookup (hostname, options, callback) {
+  if (typeof options === 'function') { callback = options; options = {} }
+  let settled = false
+  // Node may call with all: true (autoSelectFamily): dns.lookup then already
+  // returns [{ address, family }...] and the callback wants that array, while
+  // a single-address answer (e.g. from DoH) must be wrapped for it.
+  const done = (err, result, family) => {
+    if (settled) return
+    settled = true
+    if (err) return callback(err)
+    if (options.all) {
+      callback(null, Array.isArray(result) ? result : [{ address: result, family: family ?? 4 }])
+    } else {
+      callback(null, result, family)
+    }
+  }
+  let dnsErr = null
+  const dnsDone = new Promise((resolve) => {
+    dns.lookup(hostname, options ?? {}, (err, address, family) => {
+      if (!err) return done(null, address, family)
+      dnsErr = err
+      resolve()
+    })
+  })
+  const doh = new Promise((resolve) => {
+    setTimeout(() => {
+      if (settled) return resolve()
+      dohResolve(hostname).then(
+        (ip) => { done(null, ip, 4); resolve() },
+        () => resolve()
+      )
+    }, DOH_HEAD_START_MS)
+  })
+  Promise.all([dnsDone, doh]).then(() => done(dnsErr ?? new Error('lookup failed')))
+}
+
+// fetch-compatible wrapper over https.get with the resilient lookup, so the
+// call sites keep their .ok/.status/.statusText/.json() semantics (and their
+// "API request failed:"/"API returned" error strings) unchanged.
+function resilientFetch (url, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, {
+      headers: { 'User-Agent': UA, ...(opts.headers ?? {}) },
+      signal: opts.signal,
+      lookup: resilientLookup,
+      timeout: TIMEOUT_MS
+    }, (res) => {
+      const chunks = []
+      res.on('data', (c) => chunks.push(c))
+      res.on('end', () => {
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          statusText: res.statusMessage || '',
+          json: async () => JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        })
+      })
+      res.on('error', reject)
+    })
+    req.on('error', reject)
+    req.on('timeout', () => req.destroy(new Error('request timed out')))
+  })
+}
+
 async function fetchJson (url, parsePrefix = 'Failed to parse API response') {
   let res
   try {
-    res = await fetch(url, {
+    res = await resilientFetch(url, {
       headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(TIMEOUT_MS)
     })
@@ -157,7 +265,7 @@ export class ApiClient {
     let res
     const url = `${BASE}/games/${encodeURIComponent(slug)}`
     try {
-      res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+      res = await resilientFetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) })
     } catch (err) {
       throw new Error(`API request failed: ${err?.cause?.message ?? err?.message ?? err}`)
     }

@@ -2,7 +2,7 @@
   "name": "gog-archive",
   "productName": "GOG Archive Desktop",
   "description": "Desktop client for gog.squid.wtf — browse the catalog, download games via aria2/BitTorrent",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "type": "module",
   "author": {
