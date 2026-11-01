@@ -74,8 +74,12 @@ jobs:
           mkdir -p firejail
           wget -c -q "https://github.com/AppImage/appimage.github.io/releases/download/deps/alpine-firejail-git20230825.tar.gz"
           sudo tar xf alpine-firejail-git20230825.tar.gz
-          sudo tar xf musl-*.apk -C ./firejail/ 2>/dev/null || true
-          sudo tar xf firejail-0*.apk -C ./firejail/ 2>/dev/null || true
+          # musl comes separately from Alpine, like the bot's fetch-deps.sh
+          MUSL=$(wget -q "https://dl-cdn.alpinelinux.org/alpine/v3.13/main/x86_64/" -O - | grep -o 'musl-1[^"]*\.apk' | head -n 1)
+          echo "musl apk: $MUSL"
+          wget -q -O "$MUSL" "https://dl-cdn.alpinelinux.org/alpine/v3.13/main/x86_64/$MUSL"
+          sudo tar xf "$MUSL" -C ./firejail/
+          sudo tar xf firejail-0*.apk -C ./firejail/
           sudo cp -Rf ./firejail/etc/* /etc/
           sudo cp -Rf ./firejail/lib/* /lib/
           sudo cp -Rf ./firejail/usr/* /usr/
