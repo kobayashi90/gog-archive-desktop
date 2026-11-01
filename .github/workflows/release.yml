@@ -138,6 +138,7 @@ jobs:
       # the actual release state instead of version_changed (which is false
       # for exactly the retry case this needs to serve).
       - name: Upload to release
+        shell: bash # gh + POSIX syntax on the Windows runner too
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
