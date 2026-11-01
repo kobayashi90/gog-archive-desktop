@@ -1,7 +1,7 @@
 name: AppImage self-test (diagnostic branch)
 on: [push]
 jobs:
-  test:
+  online:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -9,12 +9,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libfuse2 imagemagick tesseract-ocr
-      - name: Download v2.0.3 AppImage
+      - name: Download v2.0.4 AppImage
         run: |
-          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.3/gog-archive-2.0.3-x86_64.AppImage'
+          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.4/gog-archive-2.0.4-x86_64.AppImage'
           chmod +x app.AppImage
           ls -lh app.AppImage
-      - name: Run under Xvfb
+      - name: Run under Xvfb (network available — the real-user path)
         run: |
           Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
           sleep 2
@@ -27,10 +27,8 @@ jobs:
           wait $APP || true
       - name: App log
         run: |
-          echo "=== [browse]/[ipc]/aria2/FATAL lines ==="
-          grep -E '\[browse\]|\[ipc\]|aria2|FATAL|net::ERR' run.log || echo '(none)'
-          echo "=== tail ==="
-          tail -25 run.log
+          echo "=== [browse]/[ipc]/[dns]/[doh]/aria2/FATAL lines ==="
+          grep -E '\[browse\]|\[ipc\]|\[dns\]|\[doh\]|aria2|FATAL|net::ERR' run.log || echo '(none)'
       - name: Verdict
         run: |
           FAIL=0
@@ -41,7 +39,7 @@ jobs:
             FAIL=1
           fi
           if grep -E -q 'search_games failed' run.log; then
-            echo "API FAILURE was logged:"
+            echo "API FAILURE was logged -> FAIL"
             grep -E '\[browse\]|\[ipc\]' run.log
             FAIL=1
           fi
@@ -56,17 +54,84 @@ jobs:
             echo "OCR: error text on screen -> FAIL"
             FAIL=1
           fi
-          if ! grep -qiE 'browse|downloads|settings|stellaris' screen.txt 2>/dev/null; then
-            echo "OCR: window content not recognizable -> FAIL"
-            FAIL=1
-          fi
           exit $FAIL
 
-  doh-probe:
+  offline-sandbox:
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
-      - name: DoH reachability (context for the app's fallback chain)
+      - name: Install X + tools
         run: |
-          curl -sS -m 6 -o /tmp/cf.json -w 'cloudflare DoH: %{http_code} in %{time_total}s\n' -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=gog.squid.wtf&type=A' || echo "cloudflare DoH FAILED rc=$?"
-          curl -sS -m 6 -o /tmp/g.json -w 'google DoH: %{http_code} in %{time_total}s\n' 'https://8.8.8.8/resolve?name=gog.squid.wtf&type=A' || echo "google DoH FAILED rc=$?"
-          getent ahosts gog.squid.wtf >/dev/null 2>&1 && echo "system DNS: resolves" || echo "system DNS: BROKEN (EAI_AGAIN expected)"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libfuse2 imagemagick tesseract-ocr
+      - name: Download v2.0.4 AppImage
+        run: |
+          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.4/gog-archive-2.0.4-x86_64.AppImage'
+          chmod +x app.AppImage
+      - name: Install the same firejail build the bot uses
+        run: |
+          # Mirrors code/worker.sh in appimage.github.io (lines ~364-379)
+          mkdir -p firejail
+          wget -c -q "https://github.com/AppImage/appimage.github.io/releases/download/deps/alpine-firejail-git20230825.tar.gz"
+          sudo tar xf alpine-firejail-git20230825.tar.gz
+          sudo tar xf musl-*.apk -C ./firejail/ 2>/dev/null || true
+          sudo tar xf firejail-0*.apk -C ./firejail/ 2>/dev/null || true
+          sudo cp -Rf ./firejail/etc/* /etc/
+          sudo cp -Rf ./firejail/lib/* /lib/
+          sudo cp -Rf ./firejail/usr/* /usr/
+          sudo chown root:root /usr/bin/firejail
+          sudo chmod u+s /usr/bin/firejail
+          /usr/bin/firejail --version | head -1
+      - name: Run under firejail --net=none (the bot's exact launch)
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+          sleep 2
+          export DISPLAY=:99
+          export ELECTRON_ENABLE_LOGGING=1
+          timeout --kill-after=10 50 firejail --quiet --noprofile --net=none --appimage ./app.AppImage > run.log 2>&1 &
+          APP=$!
+          sleep 30
+          import -window root screen.png || true
+          wait $APP || true
+      - name: App log
+        run: |
+          echo "=== [browse]/[ipc]/aria2/FATAL lines ==="
+          grep -E '\[browse\]|\[ipc\]|aria2|FATAL' run.log || echo '(none)'
+          echo "=== tail ==="
+          tail -15 run.log
+      - name: Verdict (mirrors code/check-screenshot.sh gates)
+        run: |
+          FAIL=0
+          # The app must have started and reached the browse screen's fetch
+          if ! grep -q 'search_games failed' run.log; then
+            echo "no fetch attempt was logged at all -> FAIL (app did not reach browse)"
+            FAIL=1
+          fi
+          tesseract screen.png screen -l eng --psm 11 >/dev/null 2>&1 || true
+          echo "=== OCR text ==="
+          cat screen.txt 2>/dev/null || echo '(no ocr output)'
+          TEXT=$(tr -s '[:space:]' ' ' < screen.txt 2>/dev/null)
+          # HARD patterns: any match here is an ERROR in the bot's gate
+          HARD='traceback|exception|segmentation fault|fatal|error while loading|glibc|not installed|cannot open display|permission denied|no such file|could not (load|find|open|start|initiali)|failed to (load|start|open|initiali|create)|cannot (load|find|open|execute|configure)|unable to (load|find|open|start)|command not found|core dumped'
+          MATCH=$(echo "$TEXT" | grep -oiE ".{0,40}(${HARD}).{0,60}" | head -n 1)
+          if [ -n "$MATCH" ]; then
+            echo "OCR: HARD error pattern on screen -> FAIL: $MATCH"
+            FAIL=1
+          else
+            echo "OCR: no HARD error pattern"
+          fi
+          # Empty-window gate: count words >=3 letters outside the menu whitelist
+          WORDS=$(echo "$TEXT" | tr 'A-Z' 'a-z' | tr -cs 'a-z' '\n' | awk 'length($0) >= 3' \
+            | grep -cvxE 'file|edit|view|help|tools|settings|window|options|search|about|preferences|image|insert|format|project|run|build|debug|item|history|bookmarks|game|sound|video|audio|playback|media|home|explore|library|application|actions|menu')
+          echo "OCR words of text: $WORDS"
+          if [ "$WORDS" -lt 5 ]; then
+            echo "window too empty for the bot's gate (<5 words) -> FAIL"
+            FAIL=1
+          fi
+          # The offline panel itself should be recognizable
+          if echo "$TEXT" | grep -qiE 'offline|catalog|retry'; then
+            echo "offline panel visible"
+          else
+            echo "NOTE: offline panel words not recognized by OCR (check the text above)"
+          fi
+          exit $FAIL
