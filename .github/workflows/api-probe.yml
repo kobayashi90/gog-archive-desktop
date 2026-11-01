@@ -16,7 +16,8 @@ jobs:
         run: |
           curl -4 -sS -m 15 -o /dev/null -w 'curl(-4, curlUA): HTTP %{http_code} in %{time_total}s\n' 'https://gog.squid.wtf/api/games?page=1&per_page=1' || echo "curl -4 defaultUA failed rc=$?"
       - name: IPv6 route
-        run: curl -6 -sS -m 8 -o /dev/null -w 'curl(-6): HTTP %{http_code}\n' 'https://gog.squid.wtf/api/games?page=1&per_page=1' || echo "curl -6 failed rc=$? (expected if no IPv6)"
+        run: |
+          curl -6 -sS -m 8 -o /dev/null -w 'curl(-6): HTTP %{http_code}\n' 'https://gog.squid.wtf/api/games?page=1&per_page=1' || echo "curl -6 failed rc=$? (expected if no IPv6)"
       - name: Node fetch (undici, like Electron main)
         run: |
           node --version || echo "no node in PATH"
