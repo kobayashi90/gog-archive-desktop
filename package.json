@@ -5,7 +5,10 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "author": "Kobayashi",
+  "author": {
+    "name": "Kobayashi",
+    "email": "kobayashi90@users.noreply.github.com"
+  },
   "packageManager": "pnpm@11.8.0",
   "main": "electron/main.js",
   "scripts": {

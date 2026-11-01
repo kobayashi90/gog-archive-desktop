@@ -52,7 +52,10 @@ jobs:
 
       - name: Generate changelog
         run: |
-          PREV_TAG="$(git tag -l 'v*' --sort=-creatordate | sed -n '2p' || true)"
+          TAG="${{ steps.vars.outputs.tag }}"
+          # Skip the current tag (present on re-runs); on a first run it does
+          # not exist yet, so the newest remaining tag is the previous release.
+          PREV_TAG="$(git tag -l 'v*' --sort=-creatordate | grep -vx "$TAG" | head -1 || true)"
           if [ -n "$PREV_TAG" ]; then
             git log "$PREV_TAG"..HEAD --oneline --no-decorate > /tmp/CHANGELOG.md
           else
@@ -129,11 +132,13 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      # Always upload: a retry after a partial run must fill an existing
+      # release, and softprops must not undraft what create-release made.
       - name: Upload to release
-        if: needs.check-version.outputs.version_changed == 'true'
         uses: softprops/action-gh-release@v3.0.1
         with:
           files: ${{ matrix.artifact-patterns }}
           tag_name: ${{ needs.check-version.outputs.current_tag }}
+          draft: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
