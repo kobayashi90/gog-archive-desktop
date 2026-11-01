@@ -129,9 +129,14 @@ export function buildSearchParams ({ limit = 48, offset = 0, query = '', genres,
 // (direct HTTPS to 1.1.1.1 / 8.8.8.8 by IP), racing it against the normal
 // lookup so healthy machines never wait for it.
 const DOH_SERVERS = ['1.1.1.1', '8.8.8.8']
+// Last resort when even DoH is unreachable from the network: IPs observed
+// serving this API (A record + geo answer), used as lookup results only —
+// TLS/SNI still verify against gog.squid.wtf itself.
+const FALLBACK_IPS = ['45.86.153.23', '23.137.105.46']
 const DOH_HEAD_START_MS = 1500
 const DOH_TIMEOUT_MS = 6000
 let dohCache = { ip: null, until: 0 }
+let fallbackCursor = 0
 
 function dohResolve (hostname) {
   if (dohCache.ip && Date.now() < dohCache.until) return Promise.resolve(dohCache.ip)
@@ -150,14 +155,25 @@ function dohResolve (hostname) {
           const j = JSON.parse(body)
           const a = (j.Answer || []).find((x) => x.type === 1)
           if (a && a.data) {
+            console.log(`[doh] ${hostname} -> ${a.data} via ${DOH_SERVERS[i]}`)
             dohCache = { ip: a.data, until: Date.now() + Math.min(a.TTL || 300, 600) * 1000 }
             resolve(a.data)
-          } else { attempt(i + 1).then(resolve, reject) }
+          } else {
+            console.error(`[doh] ${DOH_SERVERS[i]} for ${hostname}: no A record in answer`)
+            attempt(i + 1).then(resolve, reject)
+          }
         } catch { attempt(i + 1).then(resolve, reject) }
       })
     })
-    req.on('error', () => { attempt(i + 1).then(resolve, reject) })
-    req.on('timeout', () => { req.destroy(); attempt(i + 1).then(resolve, reject) })
+    req.on('error', (e) => {
+      console.error(`[doh] ${DOH_SERVERS[i]} for ${hostname}: ${e.code ?? e.message} — trying next`)
+      attempt(i + 1).then(resolve, reject)
+    })
+    req.on('timeout', () => {
+      console.error(`[doh] ${DOH_SERVERS[i]} for ${hostname}: timeout — trying next`)
+      req.destroy()
+      attempt(i + 1).then(resolve, reject)
+    })
   })
   return attempt(0)
 }
@@ -183,6 +199,7 @@ function resilientLookup (hostname, options, callback) {
     dns.lookup(hostname, options ?? {}, (err, address, family) => {
       if (!err) return done(null, address, family)
       dnsErr = err
+      console.error(`[dns] lookup ${hostname}: ${err.code ?? err.message} — racing DoH`)
       resolve()
     })
   })
@@ -191,7 +208,15 @@ function resilientLookup (hostname, options, callback) {
       if (settled) return resolve()
       dohResolve(hostname).then(
         (ip) => { done(null, ip, 4); resolve() },
-        () => resolve()
+        () => {
+          // Even DoH is unreachable: fall back to known-good IPs. Round-robin
+          // so a dead one is retried with its sibling on the next attempt.
+          const ip = FALLBACK_IPS[fallbackCursor % FALLBACK_IPS.length]
+          fallbackCursor += 1
+          console.error(`[dns] ${hostname}: DoH failed — pinned fallback IP ${ip}`)
+          done(null, ip, 4)
+          resolve()
+        }
       )
     }, DOH_HEAD_START_MS)
   })
