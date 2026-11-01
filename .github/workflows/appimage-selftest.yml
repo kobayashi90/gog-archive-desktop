@@ -9,9 +9,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libfuse2 imagemagick tesseract-ocr
-      - name: Download v2.0.2 AppImage
+      - name: Download v2.0.3 AppImage
         run: |
-          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.2/gog-archive-2.0.2-x86_64.AppImage'
+          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.3/gog-archive-2.0.3-x86_64.AppImage'
           chmod +x app.AppImage
           ls -lh app.AppImage
       - name: Run under Xvfb
@@ -61,3 +61,12 @@ jobs:
             FAIL=1
           fi
           exit $FAIL
+
+  doh-probe:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: DoH reachability (context for the app's fallback chain)
+        run: |
+          curl -sS -m 6 -o /tmp/cf.json -w 'cloudflare DoH: %{http_code} in %{time_total}s\n' -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=gog.squid.wtf&type=A' || echo "cloudflare DoH FAILED rc=$?"
+          curl -sS -m 6 -o /tmp/g.json -w 'google DoH: %{http_code} in %{time_total}s\n' 'https://8.8.8.8/resolve?name=gog.squid.wtf&type=A' || echo "google DoH FAILED rc=$?"
+          getent ahosts gog.squid.wtf >/dev/null 2>&1 && echo "system DNS: resolves" || echo "system DNS: BROKEN (EAI_AGAIN expected)"
