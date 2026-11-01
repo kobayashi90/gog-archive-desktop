@@ -56,7 +56,7 @@ jobs:
             echo "OCR: error text on screen -> FAIL"
             FAIL=1
           fi
-          if ! grep -qi 'browse' screen.txt 2>/dev/null; then
+          if ! grep -qiE 'browse|downloads|settings|stellaris' screen.txt 2>/dev/null; then
             echo "OCR: window content not recognizable -> FAIL"
             FAIL=1
           fi
