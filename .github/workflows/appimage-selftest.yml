@@ -1,0 +1,63 @@
+name: AppImage self-test (diagnostic branch)
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Install X + tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libfuse2 imagemagick tesseract-ocr
+      - name: Download v2.0.1 AppImage
+        run: |
+          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.1/gog-archive-2.0.1-x86_64.AppImage'
+          chmod +x app.AppImage
+          ls -lh app.AppImage
+      - name: Run under Xvfb
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+          sleep 2
+          export DISPLAY=:99
+          export ELECTRON_ENABLE_LOGGING=1
+          timeout --kill-after=10 50 ./app.AppImage > run.log 2>&1 &
+          APP=$!
+          sleep 30
+          import -window root screen.png || true
+          wait $APP || true
+      - name: App log
+        run: |
+          echo "=== [browse]/[ipc]/aria2/FATAL lines ==="
+          grep -E '\[browse\]|\[ipc\]|aria2|FATAL|net::ERR' run.log || echo '(none)'
+          echo "=== tail ==="
+          tail -25 run.log
+      - name: Verdict
+        run: |
+          FAIL=0
+          if grep -q 'games loaded' run.log; then
+            echo "renderer: SUCCESS line present"
+          else
+            echo "renderer: NO success line -> FAIL"
+            FAIL=1
+          fi
+          if grep -E -q 'search_games failed' run.log; then
+            echo "API FAILURE was logged:"
+            grep -E '\[browse\]|\[ipc\]' run.log
+            FAIL=1
+          fi
+          if ! grep -q 'aria2' run.log; then
+            echo "aria2 never came up -> FAIL"
+            FAIL=1
+          fi
+          tesseract screen.png screen -l eng >/dev/null 2>&1 || true
+          echo "=== OCR text ==="
+          cat screen.txt 2>/dev/null || echo '(no ocr output)'
+          if grep -qi 'failed to load' screen.txt 2>/dev/null; then
+            echo "OCR: error text on screen -> FAIL"
+            FAIL=1
+          fi
+          if ! grep -qi 'browse' screen.txt 2>/dev/null; then
+            echo "OCR: window content not recognizable -> FAIL"
+            FAIL=1
+          fi
+          exit $FAIL
