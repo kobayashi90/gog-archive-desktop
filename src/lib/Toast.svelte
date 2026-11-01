@@ -44,7 +44,7 @@
     max-width: 360px;
   }
 
-  .toast-info { background: #2563eb; }
+  .toast-info { background: #3f3f46; }
   .toast-success { background: #059669; }
   .toast-error { background: #dc2626; }
 

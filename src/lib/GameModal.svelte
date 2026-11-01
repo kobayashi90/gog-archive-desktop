@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "./ipc.js";
   import { showConfirm, showToast } from "./stores.js";
 
   let { game, onclose, onnavigateTo, onfilterGenre, onfilterTag, onfilterDeveloper, onfilterPublisher, onfilterYear } = $props();
@@ -74,7 +74,7 @@
   }
 
   function formatSize(size) {
-    if (!size) return "\u2014";
+    if (!size) return "—";
     const units = ["B", "KB", "MB", "GB", "TB"];
     let i = 0, v = size;
     while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
@@ -96,13 +96,7 @@
   function fmtRating(r) {
     if (!r) return "";
     const full = Math.round(r);
-    return "\u2605".repeat(full) + "\u2606".repeat(5 - full);
-  }
-
-  function fmtYear(ts) {
-    if (!ts) return "";
-    const d = new Date(ts * 1000);
-    return d.getFullYear();
+    return "★".repeat(full) + "☆".repeat(5 - full);
   }
 
   async function download() {
@@ -203,19 +197,42 @@
   }
 
   function handleOverlayClick(e) {
-    if (e.target === e.currentTarget || e.target.classList.contains('modal-backdrop')) close();
+    if (e.target === e.currentTarget) close();
   }
 
   function handleKeydown(e) { if (e.key === "Escape") close(); }
 
+  // span[role=button] keyboard activation (site markup parity)
+  function activate(fn) {
+    return (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
+    };
+  }
+
+  // Site contract (DetailModal.svelte): main list = 5 game + 5 goodie rows
+  // (per-group cap only when >8 files total), remainder lives in files-extra
+  // revealed by .open — the toggle must never disappear while hidden rows exist.
+  let gameFiles = $derived(files.filter((f) => f.type === "game"));
+  let goodieFiles = $derived(files.filter((f) => f.type === "goodie"));
+  let listCap = $derived(files.length > 8 ? 5 : files.length);
+
   function visibleFiles() {
-    if (showAllFiles || files.length <= 8) return files;
-    return files.slice(0, 8);
+    if (files.length <= 8) return files;
+    return [...gameFiles.slice(0, listCap), ...goodieFiles.slice(0, listCap)];
   }
 
   function hiddenFiles() {
-    if (showAllFiles || files.length <= 8) return [];
-    return files.slice(8);
+    if (files.length <= 8) return [];
+    return [...gameFiles.slice(listCap), ...goodieFiles.slice(listCap)];
+  }
+
+  // Site middle-truncation (format.ts truncateName): keeps both ends so the
+  // extension/gog-id tail stays readable.
+  function truncateName(name, max = 65) {
+    if (!name) return "—";
+    if (name.length <= max) return name;
+    const half = (max - 3) / 2;
+    return name.slice(0, half) + "..." + name.slice(-half);
   }
 
   function handleImageError() { imageError = true; }
@@ -225,14 +242,14 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="modal-backdrop" onclick={handleOverlayClick} role="presentation">
-  <div class="modal-content" role="dialog">
+<div class="modal" role="presentation">
+  <div class="modal-backdrop" onclick={handleOverlayClick} role="presentation"></div>
+  <div class="modal-content detail" role="dialog" aria-modal="true" aria-label={game.title}>
     <button class="modal-close" onclick={close} aria-label="Close">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
       </svg>
     </button>
-    <div class="modal-scroll">
     <div class="detail-header">
       <div class="detail-cover" class:no-image={!game.image || imageError}>
         {#if game.image && !imageError}
@@ -244,14 +261,14 @@
         <h2>{game.title}</h2>
         <div class="dev-pub">
           {#if game.developer}
-            <button type="button" class="dev-link" onclick={() => onfilterDeveloper?.(game.developer)}>{game.developer}</button>
+            <span class="dev-link" role="button" tabindex="0" onclick={() => onfilterDeveloper?.(game.developer)} onkeydown={activate(() => onfilterDeveloper?.(game.developer))}>{game.developer}</span>
           {/if}
           {#if game.developer && game.publisher} &middot; {/if}
           {#if game.publisher}
-            <button type="button" class="pub-link" onclick={() => onfilterPublisher?.(game.publisher)}>{game.publisher}</button>
+            <span class="pub-link" role="button" tabindex="0" onclick={() => onfilterPublisher?.(game.publisher)} onkeydown={activate(() => onfilterPublisher?.(game.publisher))}>{game.publisher}</span>
           {/if}
           {#if game.release_date}
-            &middot; <button type="button" class="year-link" onclick={() => onfilterYear?.(game.release_date.slice(0, 4))}>{game.release_date.slice(0, 4)}</button>
+            &middot; <span class="year-link" role="button" tabindex="0" onclick={() => onfilterYear?.(game.release_date.slice(0, 4))} onkeydown={activate(() => onfilterYear?.(game.release_date.slice(0, 4)))}>{game.release_date.slice(0, 4)}</span>
           {/if}
         </div>
         <div class="detail-rating">
@@ -261,10 +278,10 @@
         {#if genres.length > 0 || tags.length > 0}
           <div class="tag-group">
             {#each genres as g}
-              <button type="button" class="tag genre" onclick={() => onfilterGenre?.(g)}>{g}</button>
+              <span class="tag genre" role="button" tabindex="0" onclick={() => onfilterGenre?.(g)} onkeydown={activate(() => onfilterGenre?.(g))}>{g}</span>
             {/each}
             {#each tags as t}
-              <button type="button" class="tag tag-item" onclick={(e) => { e.stopPropagation(); onfilterTag?.(t); }}>{t}</button>
+              <span class="tag tag-item" role="button" tabindex="0" onclick={(e) => { e.stopPropagation(); onfilterTag?.(t); }} onkeydown={activate(() => onfilterTag?.(t))}>{t}</span>
             {/each}
           </div>
         {/if}
@@ -291,7 +308,7 @@
               </div>
             </div>
             <button class="download-torrent-btn" onclick={startDownload}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Retry
             </button>
           {:else if showFileSelector}
@@ -322,7 +339,7 @@
               {/if}
               <div class="file-select-actions">
                 <button class="download-torrent-btn" onclick={startDownload} disabled={installing || selectedFiles.size === 0 || notEnoughSpace}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
                     <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
@@ -338,7 +355,7 @@
             </div>
           {:else}
             <button class="download-torrent-btn" onclick={download} disabled={installing}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
@@ -359,27 +376,17 @@
           <div class="files-list">
             {#each visibleFiles() as f}
               <div class="file-item">
-                <span class="name" title={f.name}>{f.name?.length > 65 ? f.name.slice(0, 65) + '...' : f.name || '\u2014'}</span>
-                {#if f.type === "goodie"}
-                  <span class="goodie-tag">(extra)</span>
-                {/if}
-                <span class="file-right">
-                  <span class="size">{fmtSizeStr(f.size)}</span>
-                </span>
+                <span class="name" title={f.name}>{truncateName(f.name)}{#if f.type === "goodie"} <span class="file-extra-mark">(extra)</span>{/if}</span>
+                <span class="size">{fmtSizeStr(f.size)}</span>
               </div>
             {/each}
           </div>
-          {#if hiddenFiles().length > 0}
+          {#if files.length > 8}
             <div id="filesExtra" class="files-extra" class:open={showAllFiles}>
               {#each hiddenFiles() as f}
                 <div class="file-item">
-                  <span class="name" title={f.name}>{f.name?.length > 65 ? f.name.slice(0, 65) + '...' : f.name || '\u2014'}</span>
-                  {#if f.type === "goodie"}
-                    <span class="goodie-tag">(extra)</span>
-                  {/if}
-                  <span class="file-right">
-                    <span class="size">{fmtSizeStr(f.size)}</span>
-                  </span>
+                  <span class="name" title={f.name}>{truncateName(f.name)}{#if f.type === "goodie"} <span class="file-extra-mark">(extra)</span>{/if}</span>
+                  <span class="size">{fmtSizeStr(f.size)}</span>
                 </div>
               {/each}
             </div>
@@ -406,19 +413,30 @@
         </div>
       {/if}
     </div>
-    </div>
   </div>
 </div>
 
 <style>
+  /* ---------- Dialog mechanics (redesign Modal.svelte parity) ----------
+     The dialog box itself scrolls (.modal-content caps at the viewport and
+     overflows internally); the outer .modal is the fixed flex layer. App
+     chrome adaptation: top pad clears the 30px titlebar, bottom clears the
+     status bar — the site has no such chrome. */
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    justify-content: center;
+    padding: 54px 24px 48px;
+    overflow-y: auto;
+  }
+
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,.85);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 80px 40px;
+    background: rgba(8, 8, 10, .78);
+    backdrop-filter: blur(6px);
   }
 
   .modal-content {
@@ -426,22 +444,32 @@
     width: 100%;
     max-width: 860px;
     margin: 0 auto;
-    background: #000;
-    border: 1px solid var(--border);
-    border-radius: 16px;
+    background: var(--deep);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
-    animation: modalIn .3s cubic-bezier(.22,1,.36,1);
-    overflow: hidden;
-  }
-
-  .modal-scroll {
-    max-height: calc(100vh - 280px);
-    overflow-x: hidden;
+    animation: modalIn .3s cubic-bezier(.22, 1, .36, 1);
+    align-self: flex-start;
+    max-height: calc(100vh - 102px);
     overflow-y: auto;
   }
 
+  .modal-content::-webkit-scrollbar {
+    width: 6px;
+  }
+  .modal-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .modal-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, .22);
+    border-radius: 3px;
+  }
+  .modal-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, .35);
+  }
+
   @keyframes modalIn {
-    from { opacity: 0; transform: scale(.95) translateY(10px); }
+    from { opacity: 0; transform: scale(.97) translateY(10px); }
     to { opacity: 1; transform: scale(1) translateY(0); }
   }
 
@@ -455,20 +483,21 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: rgba(0,0,0,.85);
-    color: var(--text-muted);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--shelf);
+    color: var(--mist);
     cursor: pointer;
-    transition: all .2s;
+    transition: all .15s;
   }
 
   .modal-close:hover {
-    background: var(--surface-hover);
-    color: var(--text);
-    border-color: var(--border-hover);
+    background: var(--trench);
+    color: var(--foam);
+    border-color: var(--lure-mid);
   }
 
+  /* ---------- Detail dialog (redesign DetailModal.svelte parity) ---------- */
   .detail-header {
     display: flex;
     gap: 20px;
@@ -478,15 +507,18 @@
   .detail-cover {
     flex-shrink: 0;
     width: 180px;
-    border-radius: 10px;
+    border-radius: var(--radius);
     overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+    align-self: flex-start;
   }
 
   .detail-cover img {
     width: 100%;
     height: auto;
     display: block;
-    border-radius: 10px;
+    border-radius: var(--radius);
   }
 
   .cover-letter {
@@ -494,11 +526,12 @@
     align-items: center;
     justify-content: center;
     aspect-ratio: 3/4;
+    font-family: var(--font-display);
     font-size: 3rem;
     font-weight: 700;
-    color: var(--text-muted);
-    background: linear-gradient(135deg, #1a1a2e, #2d1b4e);
-    border-radius: 10px;
+    color: var(--mist);
+    background: var(--shelf);
+    border-radius: var(--radius);
   }
 
   .no-image .cover-letter {
@@ -515,51 +548,48 @@
   }
 
   .detail-info h2 {
-    font-size: 1.35rem;
+    font-family: var(--font-display);
+    font-size: 1.5rem;
     font-weight: 700;
-    margin-bottom: 2px;
-    line-height: 1.3;
+    margin-bottom: 3px;
+    line-height: 1.25;
+    padding-right: 40px;
+    letter-spacing: -.01em;
+    color: var(--foam);
   }
 
   .dev-pub {
     font-size: .85rem;
-    color: var(--text-muted);
+    color: var(--dim);
     margin-bottom: 6px;
   }
 
-  .dev-link {
-    color: var(--accent2);
+  .dev-pub span {
+    color: var(--mist);
+  }
+
+  .dev-pub .pub-link,
+  .dev-pub .year-link {
+    color: var(--dim);
+  }
+
+  .pub-link,
+  .dev-link,
+  .year-link {
     cursor: pointer;
     border-bottom: 1px dashed transparent;
     transition: all .15s;
   }
 
   .dev-link:hover {
-    border-bottom-color: var(--accent2);
+    border-bottom-color: var(--mist);
+    color: var(--foam);
   }
 
-  .pub-link {
-    color: var(--text-muted);
-    cursor: pointer;
-    border-bottom: 1px dashed transparent;
-    transition: all .15s;
-  }
-
-  .pub-link:hover {
-    border-bottom-color: var(--text-muted);
-    color: var(--text);
-  }
-
-  .year-link {
-    color: var(--text-muted);
-    cursor: pointer;
-    border-bottom: 1px dashed transparent;
-    transition: all .15s;
-  }
-
+  .pub-link:hover,
   .year-link:hover {
-    border-bottom-color: var(--text-muted);
-    color: var(--text);
+    border-bottom-color: var(--dim);
+    color: var(--foam);
   }
 
   .detail-rating {
@@ -569,15 +599,16 @@
     margin-bottom: 8px;
   }
 
-  .stars {
-    color: #ffc107;
+  .detail-rating .stars {
+    color: var(--foam);
     font-size: .85rem;
     letter-spacing: 1px;
   }
 
-  .rating-num {
-    font-size: .82rem;
-    color: var(--text-muted);
+  .detail-rating .rating-num {
+    font-size: .78rem;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
   }
 
   .tag-group {
@@ -588,71 +619,93 @@
 
   .tag {
     padding: 3px 9px;
-    border-radius: 12px;
+    border-radius: 999px;
     font-size: .7rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all .2s;
-    background: rgba(124,92,255,.12);
-    border: 1px solid rgba(124,92,255,.2);
-    color: #b3a0ff;
+    transition: all .15s;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--mist);
   }
 
   .tag:hover {
-    background: rgba(124,92,255,.25);
-    border-color: var(--accent);
-    color: #c4b5ff;
+    background: var(--lure-dim);
+    border-color: var(--lure-mid);
+    color: var(--foam);
   }
 
   .tag.genre {
-    background: rgba(0,212,170,.1);
-    border-color: rgba(0,212,170,.2);
-    color: #5eebcb;
+    background: var(--lure-dim);
+    border-color: rgba(255, 255, 255, .14);
+    color: var(--foam);
   }
 
   .tag.genre:hover {
-    background: rgba(0,212,170,.2);
-    border-color: var(--accent2);
+    background: var(--lure-mid);
+    border-color: var(--lure-mid);
   }
 
   .detail-body {
-    padding: 0 32px 4px;
+    padding: 0 32px 28px;
   }
 
   .detail-section {
     margin-bottom: 16px;
   }
 
+  /* section headers — clean uppercase eyebrow */
   .detail-section h3 {
     font-size: .7rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: .08em;
-    color: var(--text-muted);
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
+    letter-spacing: .06em;
+    color: var(--dim);
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
+  .section-summary {
+    font-size: .64rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--dim);
+    background: var(--shelf);
+    border: 1px solid var(--line-soft);
+    padding: 1px 8px;
+    border-radius: 999px;
+  }
+
+  /* App primary action — the site's .magnet-link treatment */
   .download-torrent-btn {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 20px;
-    border: 1px solid #f59e0b33;
-    border-radius: 8px;
-    background: rgba(245,158,11,.1);
-    color: #fbbf24;
-    font-size: .85rem;
+    gap: 6px;
+    padding: 7px 14px;
+    border: 1px solid var(--lure);
+    border-radius: var(--radius-sm);
+    background: var(--lure);
+    color: var(--abyss);
+    font-size: .78rem;
     font-weight: 600;
-    cursor: pointer;
-    transition: all .2s;
+    transition: all .15s;
+  }
+
+  .download-torrent-btn svg {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
   }
 
   .download-torrent-btn:hover:not(:disabled) {
-    background: rgba(245,158,11,.2);
-    border-color: #f59e0b66;
-    color: #fcd34d;
+    background: var(--pulse);
+    box-shadow: 0 4px 18px var(--lure-glow);
   }
 
   .download-torrent-btn:disabled {
@@ -661,7 +714,7 @@
   }
 
   .no-downloads {
-    color: var(--text-muted);
+    color: var(--dim);
     font-size: .82rem;
     font-style: italic;
   }
@@ -676,11 +729,11 @@
   }
 
   .add-status.success {
-    color: var(--accent2, #00d4aa);
+    color: var(--success);
   }
 
   .add-status.error {
-    color: #ef4444;
+    color: var(--danger);
   }
 
   .error-detail {
@@ -690,68 +743,73 @@
     word-break: break-word;
   }
 
+  /* Files: clean rows (site panel treatment) */
   .files-list {
     display: grid;
     gap: 2px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--shelf);
+    padding: 4px;
   }
 
   .file-item {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    padding: 4px 8px;
-    border-radius: 5px;
-    background: rgba(255,255,255,.03);
-    border: 1px solid var(--border);
-    font-size: .73rem;
-    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    font-size: .74rem;
+    gap: 10px;
+    min-width: 0;
   }
 
-  .file-right {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
+  .file-item:nth-child(even) {
+    background: rgba(255, 255, 255, .02);
   }
 
   .file-item .name {
-    color: var(--text);
+    color: var(--mist);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    max-width: 100%;
+    font-variant-numeric: tabular-nums;
   }
 
   .file-item .size {
-    color: var(--text-muted);
+    color: var(--dim);
     white-space: nowrap;
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
   }
 
-  .goodie-tag {
-    color: var(--accent2);
+  .file-extra-mark {
+    color: var(--dim);
     font-size: .68rem;
+    font-style: italic;
     flex-shrink: 0;
   }
 
   .files-toggle {
-    margin-top: 4px;
+    margin-top: 8px;
     padding: 4px 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text-muted);
-    font-size: .73rem;
+    color: var(--dim);
+    font-size: .72rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: all .2s;
+    transition: all .15s;
   }
 
   .files-toggle:hover {
-    border-color: var(--text-muted);
-    color: var(--text);
-    background: rgba(255,255,255,.06);
+    border-color: var(--lure-mid);
+    color: var(--foam);
+    background: var(--lure-dim);
   }
 
   .files-extra {
@@ -761,11 +819,23 @@
   .files-extra.open {
     display: grid;
     gap: 2px;
+    border: 1px solid var(--line);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    background: var(--shelf);
+    padding: 4px;
   }
 
+  .files-list:has(+ .files-extra.open) {
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    border-bottom: none;
+  }
+
+  /* ---------- App-specific: torrent file selector (site panel language) ---------- */
   .torrent-file-select {
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--shelf);
     overflow: hidden;
   }
 
@@ -773,10 +843,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
-    background: rgba(255,255,255,.04);
-    border-bottom: 1px solid var(--border);
-    font-size: .78rem;
+    padding: 7px 12px;
+    background: var(--trench);
+    border-bottom: 1px solid var(--line-soft);
+    font-size: .74rem;
   }
 
   .toggle-all {
@@ -784,16 +854,17 @@
     align-items: center;
     gap: 6px;
     cursor: pointer;
-    color: var(--text);
+    color: var(--foam);
+    font-weight: 600;
     user-select: none;
   }
 
   .toggle-all input {
-    accent-color: var(--accent);
+    accent-color: var(--lure);
   }
 
   .total-size {
-    color: var(--text-muted);
+    color: var(--dim);
   }
 
   .torrent-files-list {
@@ -801,38 +872,51 @@
     overflow-y: auto;
   }
 
+  .torrent-files-list::-webkit-scrollbar {
+    width: 6px;
+  }
+  .torrent-files-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .torrent-files-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, .22);
+    border-radius: 3px;
+  }
+
   .torrent-file-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 5px 10px;
-    font-size: .78rem;
+    padding: 4px 10px;
+    font-size: .74rem;
     cursor: pointer;
     transition: background .1s;
     user-select: none;
   }
 
   .torrent-file-item:hover {
-    background: rgba(255,255,255,.04);
+    background: rgba(255, 255, 255, .04);
   }
 
   .torrent-file-item.selected {
-    background: rgba(124,92,255,.08);
+    background: rgba(255, 255, 255, .06);
   }
 
   .torrent-file-item input {
-    accent-color: var(--accent);
+    accent-color: var(--lure);
   }
 
   .torrent-file-item .file-name {
     flex: 1;
+    min-width: 0;
+    color: var(--mist);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .torrent-file-item .file-size {
-    color: var(--text-muted);
+    color: var(--dim);
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
   }
@@ -842,10 +926,10 @@
     align-items: center;
     gap: 6px;
     padding: 8px 10px;
-    background: rgba(220,38,38,.12);
-    color: #f87171;
+    background: rgba(239, 68, 68, .1);
+    color: var(--danger);
     font-size: .78rem;
-    border-bottom: 1px solid rgba(220,38,38,.25);
+    border-bottom: 1px solid rgba(239, 68, 68, .2);
   }
 
   .disk-warning svg {
@@ -855,26 +939,27 @@
   .file-select-actions {
     display: flex;
     gap: 8px;
-    padding: 8px 10px;
-    border-top: 1px solid var(--border);
-    background: rgba(255,255,255,.02);
+    padding: 8px 12px;
+    border-top: 1px solid var(--line-soft);
+    background: rgba(255, 255, 255, .02);
   }
 
   .cancel-select-btn {
-    padding: 8px 16px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    padding: 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text-muted);
-    font-size: .82rem;
+    color: var(--dim);
+    font-size: .76rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: all .2s;
+    transition: all .15s;
   }
 
   .cancel-select-btn:hover {
-    border-color: var(--text-muted);
-    color: var(--text);
-    background: rgba(255,255,255,.05);
+    border-color: var(--lure-mid);
+    color: var(--foam);
+    background: var(--lure-dim);
   }
 
   .spin {
@@ -886,6 +971,7 @@
     to { transform: rotate(360deg); }
   }
 
+  /* ---------- Links (redesign parity) ---------- */
   .links-section {
     padding-top: 0;
   }
@@ -901,19 +987,18 @@
     align-items: center;
     gap: 5px;
     padding: 5px 10px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: none;
-    font: inherit;
-    cursor: pointer;
-    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--mist);
     text-decoration: none;
-    font-size: .75rem;
-    transition: all .2s;
+    font-size: .74rem;
+    font-weight: 500;
+    transition: all .15s;
   }
 
   .ext-link:hover {
-    border-color: var(--text-muted);
-    background: rgba(255,255,255,.05);
+    border-color: var(--lure-mid);
+    background: var(--lure-dim);
+    color: var(--foam);
   }
 </style>

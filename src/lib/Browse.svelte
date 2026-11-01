@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "./ipc.js";
   import GameCard from "./GameCard.svelte";
 
   let { advFilters, searchQuery, ongameCount, onviewGame, onclearSearch, onclearAdvFilters, onfilterGenre } = $props();
@@ -149,7 +149,7 @@
 
     <footer>
       <div class="footer-inner">
-        <span class="footer-left">{total.toLocaleString()} games cataloged</span>
+        <span class="footer-left"><strong>{total.toLocaleString()}</strong> games cataloged</span>
         <span class="footer-center"><button type="button" class="link-btn" onclick={() => invoke("open_url", { url: "https://discord.gg/yuvnx7FS89" })}>Discord</button><span class="footer-sep">|</span><button type="button" class="link-btn" onclick={() => invoke("open_url", { url: "https://status.squid-board.org" })}>Status</button><span class="footer-sep">|</span><button type="button" class="link-btn" onclick={() => invoke("open_url", { url: "https://give.calibour.com/49680ed027b06ced091ae39023b64151" })}>Donate</button></span>
         <span class="footer-credit">In Cooperation with <img src="/privateers.png" alt="Privateers.Wiki" class="footer-logo"> <button type="button" class="link-btn" onclick={() => invoke("open_url", { url: "https://privateers.wiki" })}>Privateers.Wiki</button></span>
       </div>
@@ -202,6 +202,13 @@
     isolation: isolate;
   }
 
+  /* Staggered card entrance, matching the site's 6-column wave */
+  :global(#grid .game-card:nth-child(6n + 2)) { animation-delay: 45ms; }
+  :global(#grid .game-card:nth-child(6n + 3)) { animation-delay: 90ms; }
+  :global(#grid .game-card:nth-child(6n + 4)) { animation-delay: 135ms; }
+  :global(#grid .game-card:nth-child(6n + 5)) { animation-delay: 180ms; }
+  :global(#grid .game-card:nth-child(6n + 6)) { animation-delay: 225ms; }
+
   #loading {
     justify-content: center;
     padding: 60px 0;
@@ -244,7 +251,7 @@
     margin-top: 12px;
     padding: 8px 24px;
     background: var(--accent);
-    color: #fff;
+    color: var(--bg);
     border-radius: var(--radius-sm);
     font-size: .85rem;
     cursor: pointer;
@@ -252,14 +259,14 @@
   }
 
   .retry-btn:hover {
-    background: var(--accent-hover, #8a6cff);
+    background: var(--accent-hover);
   }
 
   footer {
     padding: 24px;
-    font-size: .8rem;
-    color: var(--text-muted);
-    border-top: 1px solid var(--border);
+    font-size: .78rem;
+    color: var(--dim);
+    border-top: 1px solid var(--line-soft);
   }
 
   .footer-inner {
@@ -273,6 +280,12 @@
     padding: 0 24px;
     width: 100%;
     box-sizing: border-box;
+    font-size: .74rem;
+  }
+
+  .footer-left strong {
+    color: var(--text);
+    font-weight: 600;
   }
 
   .footer-left,
@@ -309,9 +322,10 @@
     border: none;
     padding: 0;
     font: inherit;
-    color: var(--text-muted);
+    color: var(--dim);
     cursor: pointer;
     text-decoration: none;
+    transition: color .15s;
   }
 
   .link-btn:hover {
@@ -340,10 +354,11 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--surface);
-    color: var(--text);
-    font-size: .85rem;
+    color: var(--text-muted);
+    font-size: .82rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: all .2s;
+    transition: all .15s;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -351,8 +366,9 @@
   }
 
   #pagination button:hover:not(:disabled) {
-    border-color: var(--text-muted);
-    background: rgba(255,255,255,.04);
+    border-color: var(--lure-mid);
+    color: var(--text);
+    background: var(--surface-hover);
   }
 
   #pagination button:disabled {
@@ -361,14 +377,16 @@
   }
 
   #pagination button.active {
-    background: #2a2a3a;
-    border-color: #2a2a3a;
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
   }
 
   .page-info {
-    font-size: .85rem;
-    color: var(--text-muted);
+    font-size: .82rem;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
     padding: 0 8px;
   }
 

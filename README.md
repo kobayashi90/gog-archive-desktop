@@ -1,6 +1,6 @@
 # GOG Archive Desktop
 
-A cross-platform desktop application for browsing, searching, and downloading games from the GOG catalog via BitTorrent. Built with [Tauri 2](https://v2.tauri.app/) and [Svelte 5](https://svelte.dev/).
+A cross-platform desktop application for browsing, searching, and downloading games from the GOG catalog via BitTorrent. Built with [Electron](https://www.electronjs.org/) and [Svelte 5](https://svelte.dev/).
 
 > In cooperation with [Privateers.Wiki](https://privateers.wiki)
 
@@ -90,27 +90,17 @@ Download the `.dmg` from the [releases page](https://github.com/kobayashi90/gog-
 > Only needed once.
 
 ### Windows
-Download the `.msi` or `.exe` installer from the [releases page](https://github.com/kobayashi90/gog-archive-desktop/releases).
+Download the `.exe` installer from the [releases page](https://github.com/kobayashi90/gog-archive-desktop/releases).
 
 ## Build from Source
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) 24+
 - [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/) (stable)
-- [Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/)
 
-#### Linux dependencies (Debian/Ubuntu)
+#### Linux packaging dependencies (Debian/Ubuntu, only for building `.deb`/`.rpm`/`.AppImage`)
 ```bash
-sudo apt-get install -y \
-  libwebkit2gtk-4.1-dev \
-  build-essential \
-  libssl-dev \
-  libgtk-3-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev \
-  libjavascriptcoregtk-4.1-dev \
-  libsoup-3.0-dev
+sudo apt-get install -y rpm libfuse2
 ```
 
 ### Build
@@ -118,10 +108,10 @@ sudo apt-get install -y \
 git clone https://github.com/kobayashi90/gog-archive-desktop.git
 cd gog-archive-desktop
 pnpm install
-pnpm tauri build
+pnpm dist
 ```
 
-Build artifacts will be in `src-tauri/target/release/bundle/`.
+Build artifacts will be in `release/` (AppImage, `.deb`, `.rpm` on Linux; `.exe` installer on Windows; `.dmg` on macOS).
 
 ## Configuration
 
@@ -137,11 +127,11 @@ Settings are stored in `~/.config/gog-archive/config.json` and can also be edite
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop Shell | [Tauri 2](https://v2.tauri.app/) |
+| Desktop Shell | [Electron](https://www.electronjs.org/) |
 | Frontend | [Svelte 5](https://svelte.dev/) |
-| Backend | [Rust](https://www.rust-lang.org/) |
-| BitTorrent | [librqbit](https://github.com/ikatson/rqbit) (rqbit) |
-| API Client | [reqwest](https://docs.rs/reqwest/) |
+| Backend | [Node.js](https://nodejs.org/) |
+| BitTorrent | [aria2](https://aria2.github.io/) |
+| API Client | [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) |
 | Build | [Vite](https://vitejs.dev/) + [pnpm](https://pnpm.io/) |
 
 ### API

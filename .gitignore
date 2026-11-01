@@ -1,7 +1,7 @@
 node_modules/
 dist/
-src-tauri/target/
-src-tauri/gen/
+release/
+smoke-shots/
 API_MIGRATION_PLAN.txt
 docs/
 *.log

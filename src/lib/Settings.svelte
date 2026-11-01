@@ -1,7 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { invoke, pickFolder as pickFolderNative } from "./ipc.js";
 
   let s = $state({});
   let saving = $state(false);
@@ -12,14 +11,16 @@
   });
 
   async function pickFolder() {
-    const dir = await open({ directory: true, multiple: false });
+    const dir = await pickFolderNative();
     if (dir) s.download_dir = dir;
   }
 
   async function save() {
     saving = true; saved = false;
     try {
-      await invoke("save_settings", { settings: s });
+      // $state proxies are not structured-cloneable — spread to a plain
+      // object before it crosses the contextBridge (DataCloneError otherwise).
+      await invoke("save_settings", { settings: { ...s } });
       saved = true;
       setTimeout(() => (saved = false), 2000);
     } catch (e) { console.error("Failed to save settings", e); }
@@ -75,6 +76,22 @@
     </div>
 
     <div class="section">
+      <h3>Seeding</h3>
+      <label class="field">
+        <span>Seed ratio (0 = indefinitely)</span>
+        <input type="number" min="0" step="0.1" bind:value={s.seed_ratio} />
+      </label>
+      <label class="field">
+        <span>Seed hours (0 = no limit)</span>
+        <input type="number" min="0" bind:value={s.seed_hours} />
+      </label>
+      <p class="hint">
+        Finished downloads keep seeding until a limit is reached, then move to
+        your Library. 0 / 0 = seed until removed or the app closes.
+      </p>
+    </div>
+
+    <div class="section">
       <h3>Behavior</h3>
       <div class="field toggle">
         <span>Notify on complete</span>
@@ -100,6 +117,7 @@
         <span>Proxy URL (socks5://...)</span>
         <input type="text" bind:value={s.proxy_url} />
       </label>
+      <p class="hint">Applied by aria2 — routes tracker and HTTP traffic through this proxy.</p>
       <label class="field">
         <span>Listen port (0=random)</span>
         <input type="number" min="0" max="65535" bind:value={s.listen_port} />
@@ -108,6 +126,24 @@
         <span>Max peers per torrent</span>
         <input type="number" min="0" bind:value={s.max_peers} />
       </label>
+      <label class="field">
+        <span>File allocation</span>
+        <select bind:value={s.file_allocation}>
+          <option value="none">none &mdash; write while downloading (fastest)</option>
+          <option value="fastalloc">fastalloc</option>
+          <option value="falloc">falloc &mdash; default</option>
+          <option value="prealloc">prealloc &mdash; reserve full size (safest)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Download retries (0 = forever)</span>
+        <input type="number" min="0" bind:value={s.max_tries} />
+      </label>
+      <label class="field">
+        <span>Retry wait (seconds)</span>
+        <input type="number" min="1" bind:value={s.retry_wait} />
+      </label>
+      <p class="hint">Allocation and retry options apply to newly added downloads.</p>
     </div>
 
   </div>
@@ -150,7 +186,8 @@
   .field > span { flex: 0 0 180px; font-size: 12px; color: var(--text-muted); }
 
   .field input[type="text"],
-  .field input[type="number"] {
+  .field input[type="number"],
+  .field select {
     flex: 1;
     padding: 4px 6px;
   }
@@ -184,6 +221,11 @@
 
   .field.toggle > span { flex: 0 0 180px; }
 
+  .hint {
+    font-size: 11px; color: var(--text-muted); opacity: .8;
+    margin: 2px 0 8px; line-height: 1.4;
+  }
+
   .toggle-wrap { flex: 1; display: flex; align-items: center; }
 
   .switch {
@@ -194,7 +236,7 @@
   .switch.on { background: var(--accent); }
 
   .switch-knob {
-    width: 16px; height: 16px; background: #fff; border-radius: 50%;
+    width: 16px; height: 16px; background: var(--bg); border-radius: 50%;
     position: absolute; top: 2px; left: 2px;
     transition: transform 0.2s;
   }
@@ -202,7 +244,8 @@
   .switch.on .switch-knob { transform: translateX(16px); }
   .save-btn {
     width: 100%; padding: 8px;
-    background: var(--accent); color: #fff; font-weight: 600;
+    background: var(--accent); color: var(--bg); font-weight: 600;
+    border: none;
     border-radius: var(--radius); font-size: 14px;
     transition: background 0.15s;
   }

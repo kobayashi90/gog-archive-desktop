@@ -11,6 +11,9 @@
     return game.genres.split(",").map((g) => g.trim()).filter(Boolean).length - 3;
   });
   let imgFailed = $state(false);
+  let loaded = $state(false);
+  // Shimmer shows only while a real cover is still loading
+  let pending = $derived(!!game.image && !imgFailed && !loaded);
 
   function handleGenreClick(g, e) {
     e.stopPropagation();
@@ -18,11 +21,17 @@
   }
 </script>
 
-<button class="game-card" onclick={() => onviewGame?.(game.slug)}>
+<button class="game-card" class:loaded={!pending} onclick={() => onviewGame?.(game.slug)}>
   {#if game.image && !imgFailed}
-    <img src={game.image} alt={game.title} loading="lazy" onerror={() => (imgFailed = true)} />
+    <img
+      src={game.image}
+      alt={game.title}
+      loading="lazy"
+      onload={() => (loaded = true)}
+      onerror={() => (imgFailed = true)}
+    />
   {:else}
-    <div class="cover-letter" style="background: linear-gradient(135deg, #1a1a2e, #2d1b4e)">
+    <div class="cover-letter" style="background: linear-gradient(135deg, var(--surface), var(--surface-hover))">
       <span class="letter">{letter}</span>
     </div>
   {/if}
@@ -51,20 +60,47 @@
     border-radius: var(--radius);
     overflow: hidden;
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--line-soft);
     cursor: pointer;
-    transition: transform .2s ease, border-color .2s;
+    transition:
+      transform 0.22s var(--ease-out),
+      border-color 0.22s,
+      box-shadow 0.22s;
     aspect-ratio: 3/4;
     width: 100%;
     padding: 0;
     text-align: left;
     backface-visibility: hidden;
     transform: translateZ(0);
+    animation: card-up 0.4s var(--ease-out) backwards;
   }
 
   .game-card:hover {
     transform: translateY(-3px);
-    border-color: var(--text-muted);
+    border-color: var(--lure-mid);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Cover shimmer while the image loads (mirrors gog.squid.wtf) */
+  .game-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      var(--surface-hover) 32%,
+      #2b2b30 48%,
+      var(--surface-hover) 64%
+    );
+    background-size: 230% 100%;
+    animation: cover-shimmer 1.35s linear infinite;
+  }
+
+  .game-card.loaded::before {
+    opacity: 0;
+    transition: opacity 0.35s;
+    animation: none;
   }
 
   .game-card img {
@@ -72,12 +108,18 @@
     height: 100%;
     object-fit: cover;
     display: block;
-    transition: transform .4s ease;
+    position: relative;
+    opacity: 0;
+    transition: transform 0.4s, opacity 0.5s;
     backface-visibility: hidden;
   }
 
+  .game-card.loaded img {
+    opacity: 1;
+  }
+
   .game-card:hover img {
-    transform: scale(1.05);
+    transform: scale(1.03);
   }
 
   .cover-letter {
@@ -99,12 +141,16 @@
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 48px 14px 14px;
-    background: linear-gradient(transparent, rgba(0,0,0,.92));
+    padding: 10px 12px 11px;
+    background: linear-gradient(
+      transparent,
+      rgba(8, 8, 10, 0.7) 15%,
+      rgba(8, 8, 10, 0.96) 40%
+    );
   }
 
   .info h3 {
-    font-size: .85rem;
+    font-size: 0.85rem;
     font-weight: 600;
     line-height: 1.3;
     margin-bottom: 2px;
@@ -115,32 +161,33 @@
   }
 
   .dev {
-    font-size: .75rem;
-    font-weight: 700;
-    color: var(--text);
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: var(--dim);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
   }
 
   .card-genres {
     display: flex;
     flex-wrap: nowrap;
-    gap: 3px;
+    gap: 4px;
     overflow: hidden;
   }
 
   .card-genre {
-    font-size: .6rem;
-    padding: 1px 6px;
-    border-radius: 8px;
-    background: rgba(0,212,170,.1);
-    border: 1px solid rgba(0,212,170,.2);
-    color: #5eccb0;
+    font-size: 0.55rem;
+    font-weight: 500;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--lure-dim);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text-muted);
     cursor: pointer;
-    transition: color .15s, background .15s, border-color .15s;
-    line-height: 1.4;
+    transition: all 0.15s;
+    line-height: 1.5;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -148,28 +195,38 @@
   }
 
   .card-genre:hover {
-    background: rgba(0,212,170,.2);
-    border-color: var(--accent2);
-    color: #7ddfc6;
+    background: var(--lure-mid);
+    border-color: var(--lure-mid);
+    color: var(--text);
   }
 
   .card-genre.more {
     background: transparent;
     border-color: var(--border);
-    color: var(--text-muted);
+    color: var(--dim);
     cursor: default;
+  }
+
+  .card-genre.more:hover {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--dim);
   }
 
   .rating-badge {
     position: absolute;
-    top: 10px;
-    right: 10px;
-    background: rgba(0,0,0,.65);
+    top: 8px;
+    right: 8px;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    background: rgba(8, 8, 10, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
     padding: 2px 8px;
-    border-radius: 20px;
-    font-size: .7rem;
+    font-size: 0.66rem;
     font-weight: 600;
-    color: #ffc107;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
     line-height: 1.4;
     pointer-events: none;
   }
@@ -177,6 +234,6 @@
   .rating-badge::before {
     content: "\2605";
     margin-right: 3px;
-    font-size: .75rem;
+    font-size: 0.62rem;
   }
 </style>

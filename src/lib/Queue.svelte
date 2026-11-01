@@ -1,5 +1,5 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "./ipc.js";
   import { showConfirm } from "./stores.js";
   import { showToast } from "./stores.js";
 
@@ -73,6 +73,19 @@
     try { await invoke("open_folder", { slug }); } catch (e) { console.error(e); }
   }
 
+  async function clearFinished() {
+    const items = completed.slice();
+    for (const t of items) {
+      try { await invoke("torrent_remove", { slug: t.slug }); } catch (e) {}
+    }
+    if (items.length) {
+      showToast(
+        `Cleared ${items.length} finished download${items.length === 1 ? "" : "s"} from the queue`,
+        "success",
+      );
+    }
+  }
+
   let active = $derived(torrents.filter((t) => t.state !== "seeding" && t.state !== "finished" && (t.progress || 0) < 100));
   let completed = $derived(torrents.filter((t) => t.state === "seeding" || t.state === "finished"));
 </script>
@@ -108,6 +121,9 @@
                 <div class="queue-stats">
                   <span class="qstat-pct">{(t.progress * 100).toFixed(1)}%</span>
                   <span class="qstat-down">&darr; {fmtSpeed(t.download_rate)}</span>
+                  {#if t.upload_rate > 0}
+                    <span class="qstat-up">&uarr; {fmtSpeed(t.upload_rate)}</span>
+                  {/if}
                   {#if t.num_peers > 0}
                     <span class="qstat-peers">{t.num_peers} peers</span>
                   {/if}
@@ -122,7 +138,9 @@
             </div>
             <div class="queue-actions">
               {#if t.state === "paused" || t.state === "error" || t.state === "stopped"}
-                <button class="queue-btn" onclick={() => resume(t.slug)}>Resume</button>
+                <button class="queue-btn" onclick={() => resume(t.slug)}>
+                  {t.state === "error" ? "Retry" : "Resume"}
+                </button>
               {:else}
                 <button class="queue-btn" onclick={() => pause(t.slug)}>Pause</button>
               {/if}
@@ -140,7 +158,10 @@
     {/if}
 
     {#if completed.length}
-      <h3 class="queue-section-title">Completed ({completed.length})</h3>
+      <h3 class="queue-section-title with-action">
+        <span>Completed ({completed.length})</span>
+        <button class="clear-btn" onclick={clearFinished}>Clear finished</button>
+      </h3>
       <div class="queue-list">
         {#each completed as t}
           <div class="queue-item done">
@@ -159,6 +180,15 @@
                 {:else if t.progress >= 1}
                   <span class="unverified-badge" title="Unable to verify download completeness">?</span>
                 {/if}
+              </div>
+              <div class="queue-stats">
+                {#if t.upload_rate > 0}
+                  <span class="qstat-up">&uarr; {fmtSpeed(t.upload_rate)}</span>
+                {/if}
+                {#if t.num_peers > 0}
+                  <span class="qstat-peers">{t.num_peers} peers</span>
+                {/if}
+                <span class="qstat-eta">seeded {t.seeding_secs > 0 ? fmtEta(t.seeding_secs) : "&mdash;"}</span>
               </div>
             </div>
             <div class="queue-actions">
@@ -204,6 +234,31 @@
     margin: 4px 0 10px;
   }
 
+  .queue-section-title.with-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .clear-btn {
+    font-size: .7rem;
+    text-transform: none;
+    letter-spacing: 0;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .15s;
+  }
+
+  .clear-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+
   .queue-list {
     display: flex;
     flex-direction: column;
@@ -217,18 +272,18 @@
     padding: 10px 14px;
     border-radius: var(--radius-sm);
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--line-soft);
     transition: border-color .15s;
     align-items: center;
   }
 
   .queue-item:hover {
-    border-color: var(--border-hover);
+    border-color: var(--border);
   }
 
   .queue-item.done {
-    border-color: rgba(0,212,170,.15);
-    background: rgba(0,212,170,.02);
+    border-color: rgba(255,255,255,.08);
+    background: rgba(255,255,255,.02);
   }
 
   .queue-thumb {
@@ -247,7 +302,7 @@
     font-size: 1.2rem;
     font-weight: 700;
     color: var(--text-muted);
-    background: linear-gradient(135deg, #1a1a2e, #2d1b4e);
+    background: linear-gradient(135deg, var(--surface), var(--surface-hover));
   }
 
   .queue-body {
@@ -276,7 +331,7 @@
 
   .queue-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #f59e0b, #f97316);
+    background: linear-gradient(90deg, #fafafa, #d4d4d8);
     border-radius: 3px;
   }
 
@@ -392,9 +447,13 @@
     flex-shrink: 0;
     white-space: nowrap;
   }
+  .qstat-up {
+    color: var(--accent2);
+    white-space: nowrap;
+  }
 
   .qstat-peers {
-    color: #60a5fa;
+    color: var(--text-muted);
   }
 
   .qstat-size {

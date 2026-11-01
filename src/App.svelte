@@ -1,8 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { listen } from "@tauri-apps/api/event";
+  import { invoke, listen, getCurrentWindow } from "./lib/ipc.js";
   import { showToast } from "./lib/stores.js";
   import Browse from "./lib/Browse.svelte";
   import Queue from "./lib/Queue.svelte";
@@ -104,6 +102,12 @@
 
   function handleAdvSearch(filters) {
     advFilters = filters;
+    // Site parity: the dialog's Title box feeds the main search input.
+    // Browse only reads the query via searchQuery, so leaving the title in
+    // advFilters alone would silently drop it from the results — and the
+    // dialog's live count (which does send it) would disagree with the grid.
+    rawQuery = typeof filters.title === "string" ? filters.title : "";
+    searchQuery = rawQuery;
     showAdvSearch = false;
     tab = "browse";
   }
@@ -155,7 +159,7 @@
 </script>
 
 <div class="app">
-  <div class="titlebar" data-tauri-drag-region>
+  <div class="titlebar" data-drag-region>
     <div class="titlebar-title">GOG Archive</div>
     <div class="titlebar-controls">
       <button class="titlebar-btn" onclick={minimize} aria-label="Minimize">
@@ -284,7 +288,7 @@
 {/if}
 
 {#if showAdvSearch}
-  <AdvancedSearch currentFilters={advFilters} onapply={handleAdvSearch} onclose={() => (showAdvSearch = false)} />
+  <AdvancedSearch currentFilters={{ title: rawQuery, ...advFilters }} onapply={handleAdvSearch} onclose={() => (showAdvSearch = false)} />
 {/if}
 
 <Toast />
@@ -295,7 +299,10 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: var(--bg);
+    /* gog.squid.wtf body glow: soft radial top-right over the abyss */
+    background:
+      radial-gradient(1200px 500px at 75% -10%, rgba(255,255,255,.05), transparent 60%),
+      var(--bg);
   }
 
   .titlebar {
@@ -358,8 +365,10 @@
     position: sticky;
     top: 0;
     z-index: 100;
-    background: rgba(0,0,0,.95);
-    border-bottom: 1px solid var(--border);
+    background: rgba(8, 8, 10, 0.82);
+    -webkit-backdrop-filter: blur(14px) saturate(1.05);
+    backdrop-filter: blur(14px) saturate(1.05);
+    border-bottom: 1px solid var(--line-soft);
     isolation: isolate;
     flex-shrink: 0;
   }
@@ -367,18 +376,20 @@
   .header-inner {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 16px 24px;
+    padding: 14px 24px;
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 20px;
   }
 
   .logo-btn {
-    font-size: 1.25rem;
+    font-family: var(--font-display);
+    font-size: 1.3rem;
     font-weight: 700;
+    letter-spacing: -0.01em;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     white-space: nowrap;
     color: var(--text);
     cursor: pointer;
@@ -394,7 +405,7 @@
   }
 
   .header-logo {
-    height: 48px;
+    height: 40px;
     width: auto;
     display: block;
   }
@@ -420,18 +431,19 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     color: var(--text);
+    font-family: var(--font-ui);
     font-size: .95rem;
     outline: none;
-    transition: border .2s, box-shadow .2s;
+    transition: border-color .15s, background .15s;
   }
 
   #search:focus {
-    border-color: var(--text-muted);
-    box-shadow: 0 0 0 3px rgba(255,255,255,.06);
+    border-color: var(--lure-mid);
+    background: var(--surface-hover);
   }
 
   #search::placeholder {
-    color: var(--text-muted);
+    color: var(--dim);
   }
 
   .adv-btn {
@@ -453,9 +465,9 @@
   }
 
   .adv-btn:hover {
-    border-color: var(--text-muted);
+    border-color: var(--lure-mid);
     color: var(--text);
-    background: rgba(255,255,255,.06);
+    background: var(--lure-dim);
   }
 
   main {
@@ -486,8 +498,8 @@
     left: 0;
     right: 0;
     z-index: 300;
-    background: rgba(10, 10, 18, 0.97);
-    border-top: 1px solid var(--border);
+    background: rgba(17, 17, 19, 0.97);
+    border-top: 1px solid var(--line-soft);
     padding: 0 12px;
     font-size: .8rem;
     box-shadow: 0 -2px 12px rgba(0,0,0,.35);
@@ -580,7 +592,7 @@
 
   .tbar-item-fill {
     height: 100%;
-    background: linear-gradient(90deg, #f59e0b, #f97316);
+    background: linear-gradient(90deg, #fafafa, #d4d4d8);
   }
 
   .tbar-item-meta {
@@ -611,7 +623,7 @@
   }
 
   .tbar-speed .tbar-down {
-    color: #5eebcb;
+    color: var(--text);
     font-weight: 600;
   }
 
@@ -623,7 +635,7 @@
 
   .nav-tabs {
     display: flex;
-    gap: 4px;
+    gap: 5px;
     flex-shrink: 0;
   }
 
@@ -631,10 +643,10 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 14px;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    background: transparent;
+    padding: 8px 15px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
     color: var(--text-muted);
     font-size: .82rem;
     cursor: pointer;
@@ -643,15 +655,16 @@
   }
 
   .nav-tab:hover {
+    border-color: var(--lure-mid);
     color: var(--text);
-    background: rgba(255,255,255,.04);
-    border-color: var(--border);
+    background: var(--surface-hover);
   }
 
   .nav-tab.active {
-    color: var(--text);
-    background: rgba(255,255,255,.06);
-    border-color: var(--border);
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
   }
 
   .nav-tab svg {
@@ -667,10 +680,16 @@
     padding: 0 5px;
     border-radius: 9px;
     background: var(--accent);
-    color: #fff;
+    color: var(--bg);
     font-size: .65rem;
     font-weight: 700;
     line-height: 1;
+  }
+
+  /* Inside the active white pill the badge must invert or it disappears */
+  .nav-tab.active .badge {
+    background: var(--bg);
+    color: var(--text);
   }
 
   .tbar-btn {

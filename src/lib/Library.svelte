@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "./ipc.js";
   import { showConfirm } from "./stores.js";
   import { showToast } from "./stores.js";
 
@@ -180,14 +180,14 @@
 
   .card {
     display: flex; flex-direction: column;
-    background: var(--surface); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--line-soft);
     border-radius: var(--radius-lg); overflow: hidden; text-align: left;
   }
 
   .cover {
     aspect-ratio: 3 / 2; background: var(--bg);
     display: flex; align-items: center; justify-content: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line-soft);
   }
 
   .letter {
@@ -222,6 +222,7 @@
   .act-btn {
     flex: 1; height: 36px; display: flex; align-items: center; justify-content: center;
     color: var(--text-muted); transition: background 0.1s, color 0.1s; gap: 4px;
+    border: none;
   }
 
   .act-btn:hover { background: var(--surface-hover); color: var(--text); }
