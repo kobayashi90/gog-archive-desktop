@@ -9,9 +9,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libfuse2 imagemagick tesseract-ocr
-      - name: Download v2.0.1 AppImage
+      - name: Download v2.0.2 AppImage
         run: |
-          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.1/gog-archive-2.0.1-x86_64.AppImage'
+          curl -sL -o app.AppImage 'https://github.com/kobayashi90/gog-archive-desktop/releases/download/v2.0.2/gog-archive-2.0.2-x86_64.AppImage'
           chmod +x app.AppImage
           ls -lh app.AppImage
       - name: Run under Xvfb
